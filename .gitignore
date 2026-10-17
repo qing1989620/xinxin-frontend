@@ -37,3 +37,5 @@ ios/App/build/
 *.ipa
 .DS_Store
 Thumbs.db
+.private/
+*聊天记录*

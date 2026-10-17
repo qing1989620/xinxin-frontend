@@ -39,6 +39,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { registerSW } from "virtual:pwa-register";
+import { Capacitor } from "@capacitor/core";
 import {
   api,
   post,
@@ -511,16 +512,28 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     window.addEventListener("beforeinstallprompt", installHandler);
-    const updateSW = registerSW({
-      onNeedRefresh() {
-        setUpdateAvailable(true);
-        toast("新版本已准备好，保存当前编辑后可在顶栏更新应用。");
-      },
-      onOfflineReady() {
-        toast("Xinxin 已可安装，离线时可以打开界面。");
-      },
-    });
+    const updateSW = !Capacitor.isNativePlatform()
+      ? registerSW({
+          onNeedRefresh() {
+            setUpdateAvailable(true);
+            toast("新版本已准备好，保存当前编辑后可在顶栏更新应用。");
+          },
+          onOfflineReady() {
+            toast("Xinxin 已可安装，离线时可以打开界面。");
+          },
+        })
+      : null;
     applyUpdate.current = updateSW;
+    if (Capacitor.isNativePlatform() && "serviceWorker" in navigator) {
+      void navigator.serviceWorker
+        .getRegistrations()
+        .then((registrations) =>
+          Promise.all(
+            registrations.map((registration) => registration.unregister()),
+          ),
+        )
+        .catch(() => {});
+    }
     const viewport = window.visualViewport;
     const keyboard = () =>
       document.body.classList.toggle(

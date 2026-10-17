@@ -264,6 +264,8 @@ export const date = (value: number) =>
     timeZone: "Asia/Shanghai",
   }).format(value);
 export const size = (bytes: number) =>
-  bytes > 1048576
-    ? `${(bytes / 1048576).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  bytes < 1024
+    ? `${bytes} B`
+    : bytes > 1048576
+      ? `${(bytes / 1048576).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(bytes / 1024))} KB`;

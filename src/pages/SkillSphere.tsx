@@ -1,418 +1,709 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  ArrowRight,
   RotateCcw,
-  MoveHorizontal,
+  Move,
   Pause,
   Play,
+  Plus,
+  Minus,
+  Search,
+  Network,
+  ScanLine,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import {
+  arc,
+  clamp,
+  focusCamera,
+  INITIAL_CAMERA,
+  position,
+  project,
+  visibleArc,
+  type Camera,
+} from "./lunarGeometry";
+import { createParticleRenderer } from "./particleRenderer";
+import "../lunar.css";
+
 type Node = {
   id: string;
   name: string;
   description: string;
   domain: string;
   tools: string[];
+  relations?: [string, string][];
 };
-type Point = { x: number; y: number; z: number };
-const TAU = Math.PI * 2;
-function rotate(p: Point, yaw: number, pitch: number): Point {
-  const x = p.x * Math.cos(yaw) + p.z * Math.sin(yaw),
-    z = p.z * Math.cos(yaw) - p.x * Math.sin(yaw);
-  return {
-    x,
-    y: p.y * Math.cos(pitch) - z * Math.sin(pitch),
-    z: p.y * Math.sin(pitch) + z * Math.cos(pitch),
-  };
-}
-function project(p: Point) {
-  return { x: 250 + p.x * 158, y: 205 + p.y * 158, z: p.z };
-}
-function loop(points: Point[], yaw: number, pitch: number) {
-  return points
-    .map((p) => {
-      const q = project(rotate(p, yaw, pitch));
-      return `${q.x.toFixed(1)},${q.y.toFixed(1)}`;
-    })
-    .join(" ");
-}
+type Motion = { from: Camera; to: Camera; started: number };
 export default function SkillSphere({
   nodes,
   onOpen,
+  onRun,
+  semantic,
+  statusError,
 }: {
   nodes: Node[];
   onOpen: (node: Node) => void;
+  onRun: (node: Node) => void;
+  semantic?: { encoder: { kind: string; degraded?: boolean } };
+  statusError?: boolean;
 }) {
-  const [angle, setAngle] = useState({ yaw: 0.35, pitch: -0.2 }),
-    [selected, setSelected] = useState(nodes[0]?.id || ""),
+  const [camera, setCamera] = useState(INITIAL_CAMERA),
+    [selected, setSelected] = useState("scientific-plotting"),
+    [hover, setHover] = useState(""),
+    [query, setQuery] = useState(""),
+    [domain, setDomain] = useState("全部"),
     [auto, setAuto] = useState(false),
-    [visible, setVisible] = useState(true);
-  const area = useRef<HTMLDivElement>(null),
+    [relations, setRelations] = useState(true),
+    [labels, setLabels] = useState(true),
+    [active, setActive] = useState(true),
+    [reduced, setReduced] = useState(false),
+    [surface, setSurface] = useState(false);
+  const stage = useRef<HTMLDivElement>(null),
+    canvas = useRef<HTMLCanvasElement>(null),
+    currentCamera = useRef(camera),
+    renderer = useRef<ReturnType<typeof createParticleRenderer>>(null),
+    animation = useRef<Motion | null>(null),
+    velocity = useRef({ x: 0, y: 0 }),
+    frame = useRef(0),
+    lastPaint = useRef(0),
     drag = useRef<{
+      id: number;
       x: number;
       y: number;
       moved: number;
-      skill?: string;
+      skill: string | null;
     } | null>(null),
-    id = useId().replace(/:/g, "");
-  useEffect(() => {
-    if (!nodes.some((n) => n.id === selected)) setSelected(nodes[0]?.id || "");
-  }, [nodes, selected]);
+    options = useRef({ auto, active, reduced, hover });
+  options.current = { auto, active, reduced, hover };
+  const points = useMemo(
+    () =>
+      nodes.map((node, index) => ({
+        ...node,
+        point: position(index, nodes.length),
+      })),
+    [nodes],
+  );
+  const byId = useMemo(
+    () => new Map(points.map((node) => [node.id, node])),
+    [points],
+  );
+  const edges = useMemo(
+    () =>
+      points.flatMap((node) =>
+        (node.relations || [])
+          .filter(([type, target]) => type === "depend_on" && byId.has(target))
+          .map(([type, target]) => ({
+            source: node.id,
+            target,
+            type,
+            points: arc(node.point, byId.get(target)!.point),
+          })),
+      ),
+    [points, byId],
+  );
+  const tick = useRef<(now: number) => void>(() => {});
+  const schedule = useCallback(() => {
+    if (!frame.current && options.current.active && !document.hidden)
+      frame.current = requestAnimationFrame((now) => tick.current(now));
+  }, []);
+  const commit = useCallback((next: Camera) => {
+    currentCamera.current = next;
+    setCamera(next);
+  }, []);
+  tick.current = (now: number) => {
+    frame.current = 0;
+    if (!options.current.active || document.hidden) return;
+    if (now - lastPaint.current < 32) {
+      schedule();
+      return;
+    }
+    lastPaint.current = now;
+    const motion = animation.current;
+    if (motion) {
+      const progress = clamp((now - motion.started) / 520, 0, 1),
+        eased = 1 - Math.pow(1 - progress, 3);
+      commit({
+        yaw: motion.from.yaw + (motion.to.yaw - motion.from.yaw) * eased,
+        pitch:
+          motion.from.pitch + (motion.to.pitch - motion.from.pitch) * eased,
+        zoom: motion.from.zoom + (motion.to.zoom - motion.from.zoom) * eased,
+      });
+      if (progress === 1) animation.current = null;
+    } else if (!drag.current) {
+      const v = velocity.current;
+      if (!options.current.reduced && Math.abs(v.x) + Math.abs(v.y) > 0.0004) {
+        commit({
+          ...currentCamera.current,
+          yaw: currentCamera.current.yaw + v.x,
+          pitch: clamp(currentCamera.current.pitch + v.y, -1.55, 1.55),
+        });
+        v.x *= 0.87;
+        v.y *= 0.87;
+      } else if (
+        options.current.auto &&
+        !options.current.reduced &&
+        !options.current.hover
+      ) {
+        commit({
+          ...currentCamera.current,
+          yaw: currentCamera.current.yaw + 0.003,
+        });
+      } else return;
+    }
+    if (!drag.current) schedule();
+  };
+  const moveTo = useCallback(
+    (to: Camera) => {
+      velocity.current = { x: 0, y: 0 };
+      if (options.current.reduced) {
+        animation.current = null;
+        commit(to);
+      } else {
+        animation.current = {
+          from: currentCamera.current,
+          to,
+          started: performance.now(),
+        };
+        schedule();
+      }
+    },
+    [commit, schedule],
+  );
+  const choose = (id: string) => {
+    const node = byId.get(id);
+    if (!node) return;
+    setSelected(id);
+    setAuto(false);
+    setHover("");
+    moveTo(focusCamera(node.point, currentCamera.current));
+  };
   useEffect(() => {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
-    const reduce = () => {
-      if (media.matches) setAuto(false);
+    const update = () => {
+      setReduced(media.matches);
+      if (media.matches) {
+        setAuto(false);
+        velocity.current = { x: 0, y: 0 };
+        if (animation.current) {
+          commit(animation.current.to);
+          animation.current = null;
+        }
+      }
     };
-    media.addEventListener("change", reduce);
+    update();
+    media.addEventListener("change", update);
     const observer = new IntersectionObserver((entries) =>
-      setVisible(entries[0].isIntersecting),
+      setActive(entries[0].isIntersecting),
     );
-    if (area.current) observer.observe(area.current);
+    if (stage.current) observer.observe(stage.current);
+    const visibility = () => {
+      if (document.hidden) {
+        if (frame.current) cancelAnimationFrame(frame.current);
+        frame.current = 0;
+      } else schedule();
+    };
+    document.addEventListener("visibilitychange", visibility);
     return () => {
-      media.removeEventListener("change", reduce);
+      media.removeEventListener("change", update);
       observer.disconnect();
+      document.removeEventListener("visibilitychange", visibility);
+      if (frame.current) cancelAnimationFrame(frame.current);
+    };
+  }, [commit, schedule]);
+  useEffect(() => {
+    if (
+      (auto && !reduced) ||
+      animation.current ||
+      Math.abs(velocity.current.x) + Math.abs(velocity.current.y) > 0.0004
+    )
+      schedule();
+  }, [auto, active, reduced, hover, schedule]);
+  useEffect(() => {
+    const element = canvas.current;
+    if (!element) return;
+    renderer.current = createParticleRenderer(element);
+    setSurface(Boolean(renderer.current));
+    const resize = new ResizeObserver(() =>
+      renderer.current?.draw(currentCamera.current),
+    );
+    resize.observe(element);
+    renderer.current?.draw(currentCamera.current);
+    return () => {
+      resize.disconnect();
+      renderer.current?.dispose();
+      renderer.current = null;
     };
   }, []);
   useEffect(() => {
-    if (
-      !auto ||
-      !visible ||
-      matchMedia("(prefers-reduced-motion: reduce)").matches
-    )
-      return;
-    const timer = setInterval(() => {
-      if (!document.hidden && !drag.current)
-        setAngle((a) => ({ ...a, yaw: a.yaw + 0.009 }));
-    }, 60);
-    return () => clearInterval(timer);
-  }, [auto, visible]);
-  const points = nodes
-    .map((node, i) => {
-      const y = 1 - (2 * (i + 0.5)) / nodes.length,
-        r = Math.sqrt(1 - y * y),
-        theta = i * Math.PI * (3 - Math.sqrt(5));
-      return {
-        ...node,
-        ...project(
-          rotate(
-            { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r },
-            angle.yaw,
-            angle.pitch,
-          ),
-        ),
-      };
-    })
-    .sort((a, b) => a.z - b.z);
-  const current = nodes.find((n) => n.id === selected);
-  const rings = Array.from({ length: 7 }, (_, ring) =>
-    Array.from({ length: 65 }, (_, i) => {
-      const a = (i / 64) * TAU;
-      if (ring < 4) {
-        const y = (ring - 1.5) * 0.42,
-          r = Math.sqrt(1 - y * y);
-        return { x: r * Math.cos(a), y, z: r * Math.sin(a) };
-      }
-      const b = ((ring - 4) * Math.PI) / 3;
-      return {
-        x: Math.cos(a) * Math.cos(b),
-        y: Math.sin(a),
-        z: Math.cos(a) * Math.sin(b),
-      };
-    }),
+    renderer.current?.draw(camera, byId.get(hover || selected)?.point);
+  }, [camera, hover, selected, byId]);
+  useEffect(() => {
+    if (!nodes.some((node) => node.id === selected))
+      setSelected(nodes[0]?.id || "");
+  }, [nodes, selected]);
+  const filtered = nodes.filter(
+    (node) =>
+      (domain === "全部" || node.domain === domain) &&
+      [node.name, node.description, node.domain, node.id]
+        .join(" ")
+        .toLowerCase()
+        .includes(query.toLowerCase()),
   );
-  const craters = Array.from({ length: 34 }, (_, i) => {
-    const y = 1 - (2 * (i + 0.5)) / 34,
-      r = Math.sqrt(1 - y * y),
-      theta = i * 2.39996;
-    return {
-      ...project(
-        rotate(
-          { x: Math.cos(theta) * r, y, z: Math.sin(theta) * r },
-          angle.yaw,
-          angle.pitch,
-        ),
+  const visibleIds = new Set(filtered.map((node) => node.id));
+  const current = byId.get(selected),
+    index = nodes.findIndex((node) => node.id === selected);
+  const projected = points
+    .map((node) => ({ ...node, ...project(node.point, camera) }))
+    .sort((a, b) => a.z - b.z);
+  const labelIds = new Set<string>();
+  const labelBoxes: { left: number; right: number; y: number }[] = [];
+  for (const node of projected
+    .filter((node) => node.z > 0.15 && visibleIds.has(node.id))
+    .sort(
+      (a, b) =>
+        Number(b.id === selected || b.id === hover) -
+          Number(a.id === selected || a.id === hover) || b.z - a.z,
+    )) {
+    const width = node.name.length * 9 + 55;
+    const left =
+      node.x > 430 || (node.x > 170 && node.x < 300)
+        ? node.x - 10 - width
+        : node.x + 10;
+    const box = { left, right: left + width, y: node.y };
+    if (
+      labelIds.size < 4 &&
+      !labelBoxes.some(
+        (other) =>
+          Math.abs(other.y - box.y) < 35 &&
+          box.left < other.right + 8 &&
+          box.right + 8 > other.left,
+      )
+    ) {
+      labelIds.add(node.id);
+      labelBoxes.push(box);
+    }
+  }
+  function zoom(delta: number) {
+    setAuto(false);
+    moveTo({
+      ...currentCamera.current,
+      zoom: clamp(
+        (animation.current?.to.zoom ?? currentCamera.current.zoom) + delta,
+        0.75,
+        1.28,
       ),
-      size: 4 + ((i * 7) % 13),
-    };
-  }).filter((p) => p.z > 0);
+    });
+  }
+  function release(event: React.PointerEvent<HTMLDivElement>) {
+    const dragging = drag.current;
+    if (!dragging || event.pointerId !== dragging.id) return;
+    drag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.type === "pointerup" && dragging.moved < 6 && dragging.skill)
+      choose(dragging.skill);
+    else if (event.type === "pointerup" && !reduced) schedule();
+    else velocity.current = { x: 0, y: 0 };
+  }
   return (
-    <section
-      className="sphere-explorer desk-panel"
-      ref={area}
-      aria-label="交互能力星图"
-    >
-      <div className="sphere-stage">
-        <header>
-          <span className="eyebrow">YOUR CAPABILITY ORBIT</span>
-          <span className="sphere-counter">{nodes.length} SKILLS / LOCAL</span>
+    <section className="lunar-explorer" aria-label="Xinxin 的交互能力星图">
+      <div className="atlas-stage" ref={stage}>
+        <header className="atlas-stage-heading">
+          <div>
+            <span className="atlas-kicker">XINXIN / CAPABILITY ATLAS</span>
+            <h2>小小星球，大有可为。</h2>
+          </div>
+          <span className="atlas-live">
+            <i />
+            {nodes.length} 个能力
+          </span>
         </header>
-        <svg
-          className="skill-sphere"
-          viewBox="0 0 500 410"
-          role="img"
-          aria-label="可拖动旋转的技能月球。方向键旋转，Home 键复位；也可使用右侧技能列表。"
+        <div
+          className="atlas-viewport"
+          data-renderer={surface ? "particle-canvas" : "node-map"}
           tabIndex={0}
-          onKeyDown={(e) => {
+          role="group"
+          aria-label="粒子技能星球，拖动旋转，方向键调整，Home 复位，加减号缩放，空格切换旋转"
+          aria-describedby="atlas-help"
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
             if (
-              [
+              ![
                 "ArrowLeft",
                 "ArrowRight",
                 "ArrowUp",
                 "ArrowDown",
                 "Home",
-              ].includes(e.key)
-            ) {
-              e.preventDefault();
-              setAuto(false);
-              setAngle((a) =>
-                e.key === "Home"
-                  ? { yaw: 0.35, pitch: -0.2 }
-                  : {
-                      yaw:
-                        a.yaw +
-                        (e.key === "ArrowLeft"
-                          ? -0.18
-                          : e.key === "ArrowRight"
-                            ? 0.18
-                            : 0),
-                      pitch: Math.max(
-                        -1.4,
-                        Math.min(
-                          1.4,
-                          a.pitch +
-                            (e.key === "ArrowUp"
-                              ? -0.14
-                              : e.key === "ArrowDown"
-                                ? 0.14
-                                : 0),
-                        ),
-                      ),
-                    },
-              );
+                "+",
+                "=",
+                "-",
+                " ",
+              ].includes(event.key)
+            )
+              return;
+            event.preventDefault();
+            if (event.key === " ") {
+              setAuto((value) => !value && !reduced);
+              return;
             }
+            setAuto(false);
+            if (event.key === "Home") moveTo(INITIAL_CAMERA);
+            else if (event.key === "+" || event.key === "=") zoom(0.12);
+            else if (event.key === "-") zoom(-0.12);
+            else
+              moveTo({
+                ...currentCamera.current,
+                yaw:
+                  currentCamera.current.yaw +
+                  (event.key === "ArrowLeft"
+                    ? -0.25
+                    : event.key === "ArrowRight"
+                      ? 0.25
+                      : 0),
+                pitch: clamp(
+                  currentCamera.current.pitch +
+                    (event.key === "ArrowUp"
+                      ? -0.2
+                      : event.key === "ArrowDown"
+                        ? 0.2
+                        : 0),
+                  -1.55,
+                  1.55,
+                ),
+              });
           }}
-          onPointerDown={(e) => {
-            if (e.button !== 0) return;
+          onPointerDown={(event) => {
+            if (event.button !== 0 || drag.current) return;
+            animation.current = null;
+            velocity.current = { x: 0, y: 0 };
+            setAuto(false);
             drag.current = {
-              x: e.clientX,
-              y: e.clientY,
+              id: event.pointerId,
+              x: event.clientX,
+              y: event.clientY,
               moved: 0,
               skill:
-                (e.target as Element)
+                (event.target as Element)
                   .closest("[data-skill]")
-                  ?.getAttribute("data-skill") || undefined,
+                  ?.getAttribute("data-skill") || null,
             };
-            e.currentTarget.setPointerCapture(e.pointerId);
-            setAuto(false);
+            event.currentTarget.setPointerCapture(event.pointerId);
           }}
-          onPointerMove={(e) => {
+          onPointerMove={(event) => {
             const d = drag.current;
-            if (!d) return;
-            const dx = e.clientX - d.x,
-              dy = e.clientY - d.y;
+            if (!d || event.pointerId !== d.id) return;
+            const dx = event.clientX - d.x,
+              dy = event.clientY - d.y;
             d.moved += Math.abs(dx) + Math.abs(dy);
-            d.x = e.clientX;
-            d.y = e.clientY;
-            setAngle((a) => ({
-              yaw: a.yaw + dx * 0.009,
-              pitch: Math.max(-1.4, Math.min(1.4, a.pitch + dy * 0.009)),
-            }));
+            d.x = event.clientX;
+            d.y = event.clientY;
+            velocity.current = { x: dx * 0.005, y: dy * 0.005 };
+            commit({
+              ...currentCamera.current,
+              yaw: currentCamera.current.yaw + dx * 0.006,
+              pitch: clamp(
+                currentCamera.current.pitch + dy * 0.006,
+                -1.55,
+                1.55,
+              ),
+            });
           }}
-          onPointerUp={(e) => {
-            const d = drag.current;
-            if (d && d.moved < 6) {
-              if (d.skill) setSelected(d.skill);
-            }
-            drag.current = null;
-            if (e.currentTarget.hasPointerCapture(e.pointerId))
-              e.currentTarget.releasePointerCapture(e.pointerId);
-          }}
-          onPointerCancel={() => {
-            drag.current = null;
-          }}
+          onPointerUp={release}
+          onPointerCancel={release}
+          onLostPointerCapture={release}
         >
-          <defs>
-            <radialGradient id={`${id}-moon`} cx="30%" cy="24%" r="83%">
-              <stop offset="0" stopColor="#f0f1e8" />
-              <stop offset=".58" stopColor="#d5dcd0" />
-              <stop offset="1" stopColor="#879b8c" />
-            </radialGradient>
-            <clipPath id={`${id}-clip`}>
-              <circle cx="250" cy="205" r="158" />
-            </clipPath>
-          </defs>
-          <ellipse
-            cx="250"
-            cy="205"
-            rx="215"
-            ry="84"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth=".65"
-            strokeDasharray="2 7"
-            transform="rotate(-23 250 205)"
-            opacity=".2"
-          />
-          <circle
-            cx="250"
-            cy="205"
-            r="174"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth=".6"
-            opacity=".13"
-          />
-          <circle cx="250" cy="205" r="158" fill={`url(#${id}-moon)`} />
-          <g clipPath={`url(#${id}-clip)`}>
-            {craters.map((p, i) => (
-              <g
-                key={i}
-                transform={`translate(${p.x} ${p.y}) rotate(${(p.x - 250) * 0.25})`}
-                opacity={0.04 + p.z * 0.1}
-              >
-                <ellipse
-                  rx={p.size * (0.35 + p.z * 0.6)}
-                  ry={p.size}
-                  fill="#657d6c"
-                />
-                <ellipse
-                  cx="-1"
-                  cy="-1.4"
-                  rx={p.size * (0.25 + p.z * 0.5)}
-                  ry={p.size * 0.82}
-                  fill="#dbe2d4"
-                />
+          <div className="atlas-stars" aria-hidden="true" />
+          <canvas className="atlas-particles" ref={canvas} aria-hidden="true" />
+          <svg
+            className="atlas-orbits"
+            viewBox="0 0 600 500"
+            aria-hidden="true"
+          >
+            <ellipse
+              cx="300"
+              cy="250"
+              rx={220 * camera.zoom}
+              ry="76"
+              transform="rotate(-25 300 250)"
+              className="atlas-orbit-line"
+            />
+            <circle
+              cx="300"
+              cy="250"
+              r={192 * camera.zoom}
+              className="atlas-guide-ring"
+            />
+            {edges
+              .filter(
+                (edge) =>
+                  relations &&
+                  visibleIds.has(edge.source) &&
+                  visibleIds.has(edge.target),
+              )
+              .map((edge) => (
                 <path
-                  d={`M ${-p.size * 0.5},${-p.size * 0.5} Q 0,${-p.size * 1.2} ${p.size * 0.5},${-p.size * 0.5}`}
-                  fill="none"
-                  stroke="#6f8371"
-                  strokeWidth="1"
+                  key={edge.source + edge.target}
+                  d={visibleArc(edge.points, camera)}
+                  className={
+                    edge.source === selected || edge.target === selected
+                      ? "atlas-edge selected"
+                      : "atlas-edge"
+                  }
                 />
-              </g>
-            ))}
-          </g>
-          <g fill="none" stroke="currentColor" strokeWidth=".65" opacity=".13">
-            {rings.map((points, i) => (
-              <polyline key={i} points={loop(points, angle.yaw, angle.pitch)} />
-            ))}
-          </g>
-          {points.map((p) => (
-            <g
-              key={p.id}
-              data-skill={p.id}
-              className="sphere-point"
-              style={{ opacity: p.z < -0.1 ? 0.28 : 1 }}
-            >
-              <circle cx={p.x} cy={p.y} r="17" fill="transparent" />
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={p.id === selected ? 8 : 4.5}
-                fill={p.id === selected ? "var(--accent)" : "var(--surface)"}
-                stroke="var(--accent)"
-                strokeWidth="1.2"
-              />
-              {p.id === selected && (
+              ))}
+            {projected
+              .filter((node) => node.z <= 0 && visibleIds.has(node.id))
+              .map((node) => (
                 <circle
-                  cx={p.x}
-                  cy={p.y}
-                  r="13"
-                  fill="none"
-                  stroke="var(--accent)"
-                  opacity=".35"
+                  key={node.id}
+                  cx={node.x}
+                  cy={node.y}
+                  r="2"
+                  className="atlas-far-node"
                 />
-              )}
-              <text
-                x={p.x + 13}
-                y={p.y + 4}
-                fontSize="10"
-                fill="var(--ink)"
-                paintOrder="stroke"
-                stroke="#f3f5ee"
-                strokeWidth="3"
-                strokeLinejoin="round"
+              ))}
+            <path
+              d="M45 82h12M51 76v12M543 418h12M549 412v12"
+              className="atlas-crosshair"
+            />
+          </svg>
+          {projected
+            .filter((node) => node.z > 0 && visibleIds.has(node.id))
+            .map((node) => (
+              <button
+                key={node.id}
+                type="button"
+                data-skill={node.id}
+                className={`atlas-node ${node.id === selected ? "selected" : ""} ${node.x > 430 || (node.x > 170 && node.x < 300) ? "label-left" : ""}`}
+                style={{ left: `${node.x / 6}%`, top: `${node.y / 5}%` }}
+                aria-label={`聚焦 ${node.name}`}
+                aria-pressed={node.id === selected}
+                onMouseEnter={() => setHover(node.id)}
+                onMouseLeave={() => setHover("")}
+                onClick={(event) => {
+                  if (event.detail === 0) choose(node.id);
+                }}
               >
-                {p.name}
-              </text>
-            </g>
-          ))}
-          <path
-            d="M30 46h16M38 38v16M454 362h16M462 354v16"
-            stroke="currentColor"
-            strokeWidth=".6"
-            opacity=".45"
-          />
-        </svg>
-        <footer>
-          <span>
-            <MoveHorizontal size={13} />
-            拖动旋转 · 点击节点
-          </span>
+                <span className="atlas-node-dot" />
+                {((labels && labelIds.has(node.id)) ||
+                  node.id === selected ||
+                  node.id === hover) && (
+                  <span className="atlas-node-label">
+                    {node.name}
+                    <small>{node.domain}</small>
+                  </span>
+                )}
+              </button>
+            ))}
+          <div className="atlas-scale" aria-hidden="true">
+            <i />
+            <span>{Math.round(camera.zoom * 100)}%</span>
+          </div>
+          <p className="atlas-coordinate" aria-hidden="true">
+            {(((camera.yaw * 180) / Math.PI) % 360).toFixed(1)}° /{" "}
+            {((camera.pitch * 180) / Math.PI).toFixed(1)}°
+          </p>
+        </div>
+        <div className="atlas-controls" aria-label="星图显示控制">
           <div>
             <button
-              className="icon-button"
-              aria-label="向左旋转星图"
-              onClick={() => setAngle((a) => ({ ...a, yaw: a.yaw - 0.3 }))}
+              title={
+                auto
+                  ? "暂停旋转"
+                  : reduced
+                    ? "系统已开启减少动态效果"
+                    : "缓慢旋转"
+              }
+              aria-label={auto ? "暂停旋转" : "缓慢旋转"}
+              aria-pressed={auto}
+              disabled={reduced}
+              onClick={() => setAuto((value) => !value)}
             >
-              <ChevronLeft size={15} />
+              {auto ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+            <span className="atlas-control-divider" />
+            <button
+              aria-label="缩小星球"
+              disabled={camera.zoom <= 0.75}
+              onClick={() => zoom(-0.12)}
+            >
+              <Minus size={16} />
             </button>
             <button
-              className="icon-button"
-              aria-label="向右旋转星图"
-              onClick={() => setAngle((a) => ({ ...a, yaw: a.yaw + 0.3 }))}
+              aria-label="放大星球"
+              disabled={camera.zoom >= 1.28}
+              onClick={() => zoom(0.12)}
             >
-              <ChevronRight size={15} />
+              <Plus size={16} />
             </button>
             <button
-              className="icon-button"
               aria-label="复位星图"
               onClick={() => {
-                setAngle({ yaw: 0.35, pitch: -0.2 });
                 setAuto(false);
+                moveTo(INITIAL_CAMERA);
               }}
             >
-              <RotateCcw size={14} />
-            </button>
-            <button
-              className="icon-button"
-              aria-label={auto ? "暂停星图旋转" : "自动旋转星图"}
-              aria-pressed={auto}
-              onClick={() => setAuto(!auto)}
-            >
-              {auto ? <Pause size={14} /> : <Play size={14} />}
+              <RotateCcw size={15} />
             </button>
           </div>
+          <div>
+            <button
+              className={relations ? "active" : ""}
+              aria-label="显示依赖连线"
+              aria-pressed={relations}
+              onClick={() => setRelations((value) => !value)}
+            >
+              <Network size={16} />
+            </button>
+            <button
+              className={labels ? "active" : ""}
+              aria-label="显示技能标签"
+              aria-pressed={labels}
+              onClick={() => setLabels((value) => !value)}
+            >
+              <ScanLine size={16} />
+            </button>
+          </div>
+        </div>
+        <footer className="atlas-stage-footer">
+          <span id="atlas-help">
+            <Move size={12} />
+            拖动探索 · 点选聚焦
+          </span>
+          <span>
+            {surface ? "PARTICLE FIELD" : "技能节点视图"} / {edges.length}{" "}
+            项依赖
+          </span>
         </footer>
       </div>
-      <aside className="sphere-directory">
-        <p className="eyebrow">CONNECTED CAPABILITIES</p>
-        <h2>围绕你的目标，各司其职。</h2>
-        <p>选一个节点，了解它能完成什么。</p>
-        <div className="sphere-node-list">
-          {nodes.map((node) => (
+      <aside className="atlas-directory">
+        <header>
+          <span className="eyebrow">A LITTLE HELP, A LOT DONE.</span>
+          <h2>有事，尽管交给我。</h2>
+          <p>选一个能力，看看 Xinxin 能怎么帮你。</p>
+        </header>
+        <label className="atlas-search">
+          <Search size={15} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="寻找一种能力"
+            aria-label="搜索星图技能"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && filtered.length)
+                choose(filtered[0].id);
+            }}
+          />
+          <kbd>{filtered.length}</kbd>
+        </label>
+        <div className="atlas-filters" aria-label="筛选技能领域">
+          {["全部", ...new Set(nodes.map((node) => node.domain))].map(
+            (item) => (
+              <button
+                key={item}
+                aria-pressed={domain === item}
+                onClick={() => setDomain(item)}
+              >
+                {item}
+              </button>
+            ),
+          )}
+        </div>
+        <div className="atlas-directory-list" aria-label="技能列表">
+          {filtered.map((node) => (
             <button
               key={node.id}
-              className={selected === node.id ? "selected" : ""}
-              onClick={() => setSelected(node.id)}
-              aria-pressed={selected === node.id}
+              aria-pressed={node.id === selected}
+              className={node.id === selected ? "selected" : ""}
+              onClick={() => choose(node.id)}
             >
-              <span className="connection-dot ready" />
+              <span className="atlas-list-dot" />
               <strong>{node.name}</strong>
               <small>{node.domain}</small>
+              <ArrowUpRight size={13} />
             </button>
           ))}
+          {!filtered.length && (
+            <p className="atlas-no-results" role="status">
+              还没找到，换个关键词试试呀。
+            </p>
+          )}
         </div>
-        {current && (
-          <div className="sphere-selected">
-            <span className="eyebrow">{current.domain}</span>
+        {current ? (
+          <section
+            className="atlas-inspector"
+            aria-label="当前技能"
+            aria-live="polite"
+          >
+            <div className="atlas-selection-count">
+              <span>
+                {String(index + 1).padStart(2, "0")}{" "}
+                <i>/ {String(nodes.length).padStart(2, "0")}</i>
+              </span>
+              <div>
+                <button
+                  aria-label="上一个技能"
+                  onClick={() =>
+                    choose(nodes[(index - 1 + nodes.length) % nodes.length].id)
+                  }
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  aria-label="下一个技能"
+                  onClick={() => choose(nodes[(index + 1) % nodes.length].id)}
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+            <span className="atlas-domain">
+              {current.domain} · {current.tools.length} 个工具
+            </span>
             <h3>{current.name}</h3>
             <p>{current.description}</p>
-            <button className="text-button" onClick={() => onOpen(current)}>
-              查看能力与工具 <ArrowUpRight size={15} />
-            </button>
-          </div>
+            {(current.relations || [])
+              .filter(([type]) => type === "depend_on")
+              .map(([, target]) => (
+                <button
+                  className="atlas-dependency"
+                  key={target}
+                  onClick={() => choose(target)}
+                >
+                  <Network size={13} />
+                  需要 {byId.get(target)?.name || target}
+                  <ArrowUpRight size={12} />
+                </button>
+              ))}
+            <div className="atlas-inspector-actions">
+              <button className="button primary" onClick={() => onRun(current)}>
+                和 Xinxin 开始
+                <ArrowRight size={15} />
+              </button>
+              <button className="text-button" onClick={() => onOpen(current)}>
+                了解能力
+                <ArrowUpRight size={14} />
+              </button>
+            </div>
+          </section>
+        ) : (
+          <p>选择一个能力后，在这里查看用途与工具。</p>
         )}
+        <footer className="atlas-model-status">
+          <i />
+          {semantic
+            ? semantic.encoder.kind === "dense-onnx"
+              ? "语义模型已连接"
+              : semantic.encoder.degraded
+                ? "语义模型未就绪 · 当前使用词法检索"
+                : "轻量词法检索"
+            : statusError
+              ? "检索状态暂不可用，稍后重试"
+              : "正在读取检索状态…"}
+          <span>SkillNet</span>
+        </footer>
       </aside>
     </section>
   );

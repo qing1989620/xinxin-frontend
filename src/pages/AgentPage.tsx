@@ -32,7 +32,6 @@ import {
   post,
   put,
   remove,
-  upload,
   watchRun,
   stableRequestKey,
   acknowledgeRequest,
@@ -51,6 +50,7 @@ import {
   useMedia,
 } from "../ui";
 import AgentInspector from "./AgentInspector";
+import ResourcePicker from "../ResourcePicker";
 type Conversation = {
   id: string;
   title: string;
@@ -102,7 +102,10 @@ export default function AgentPage() {
     [draft, setDraft] = useState((location.state as any)?.prompt || ""),
     [permission, setPermission] = useState("read"),
     [server, setServer] = useState((location.state as any)?.serverId || ""),
-    [files, setFiles] = useState<FileItem[]>([]),
+    [files, setFiles] = useState<FileItem[]>(
+      (location.state as any)?.files || [],
+    ),
+    [resourcesOpen, setResourcesOpen] = useState(false),
     [active, setActive] = useState<Run | null>(null),
     [watched, setWatched] = useState<Run | null>(null),
     [events, setEvents] = useState<EventItem[]>([]),
@@ -124,14 +127,12 @@ export default function AgentPage() {
     [maxSeconds, setMaxSeconds] = useState(300),
     [allowMemory, setAllowMemory] = useState(false),
     [artifacts, setArtifacts] = useState<FileItem[]>([]),
-    [uploading, setUploading] = useState(false),
     [follow, setFollow] = useState(true);
   const servers = useResource<ServerItem[]>("/servers"),
     settings = useResource<{ model: string; model_configured: boolean }>(
       "/settings",
     ),
     bottom = useRef<HTMLDivElement>(null),
-    picker = useRef<HTMLInputElement>(null),
     draftRef = useRef<HTMLTextAreaElement>(null),
     currentCid = useRef(cid),
     archiveMode = useRef(showArchived);
@@ -242,7 +243,7 @@ export default function AgentPage() {
     });
   }, [messages.length, stream, follow]);
   async function send() {
-    if (!draft.trim() || busy || active || archived || uploading) return;
+    if (!draft.trim() || busy || active || archived) return;
     setBusy(true);
     setFollow(true);
     const text = draft;
@@ -404,7 +405,7 @@ export default function AgentPage() {
             </button>
             <div>
               <h1>
-                Agent <span>{cid ? title : "私人执行助理"}</span>
+                Xinxin <span>{cid ? title : "你的私人 Agent"}</span>
               </h1>
               <p className="agent-model-line">
                 <span
@@ -470,11 +471,11 @@ export default function AgentPage() {
                 <span className="brand-mark">x</span>
                 <span>Xinxin Agent</span>
               </div>
-              <h2>一个目标，我们一起完成。</h2>
+              <h2>在这呀，今天想折腾点什么？</h2>
               <p>
-                告诉我你想做的事，带上必要的资料。
+                文件也可以一起给我。
                 <br />
-                从理解目标，到可验证的交付。
+                我先看看，弄好给你。
               </p>
               <div className="welcome-preset-grid">
                 {presets.map((item) => (
@@ -700,9 +701,10 @@ export default function AgentPage() {
               <div>
                 <button
                   className="icon-button"
-                  aria-label="添加私人文件"
-                  disabled={active !== null || archived || uploading}
-                  onClick={() => picker.current?.click()}
+                  aria-label="上传或选择资源"
+                  title="上传文件，或从资源库选择"
+                  disabled={active !== null || archived}
+                  onClick={() => setResourcesOpen(true)}
                 >
                   <Paperclip size={18} />
                 </button>
@@ -771,7 +773,7 @@ export default function AgentPage() {
                 <button
                   className="send-button"
                   aria-label="发送任务"
-                  disabled={!draft.trim() || busy || archived || uploading}
+                  disabled={!draft.trim() || busy || archived}
                   onClick={() => void send()}
                 >
                   <ArrowUp size={20} />
@@ -782,40 +784,31 @@ export default function AgentPage() {
           <p className="composer-hint">
             <span>
               <Shield size={11} />
-              {uploading
-                ? "正在保存附件…"
-                : permission === "full"
-                  ? "完整权限：后端主机与所选服务器命令。"
-                  : permission === "workspace"
-                    ? "工作区：创建文件、图表与私人草稿。"
-                    : "只读：检索、阅读与分析。"}
+              {permission === "full"
+                ? "完整权限：后端主机与所选服务器命令。"
+                : permission === "workspace"
+                  ? "工作区：创建文件、图表与私人草稿。"
+                  : "只读：检索、阅读与分析。"}
             </span>
             <span>Enter 发送 · Shift Enter 换行</span>
           </p>
         </div>
-        <input
-          ref={picker}
-          type="file"
-          hidden
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-              setUploading(true);
-              try {
-                if (files.length >= 10) throw new Error("每轮最多附加10个文件");
-                const saved = await upload(file);
-                setFiles((old) => [...old, saved]);
-                toast("已保存并加入本轮附件");
-              } catch (error) {
-                toast((error as Error).message, true);
-              } finally {
-                setUploading(false);
-              }
-            }
-            e.target.value = "";
-          }}
-        />
       </section>
+      {resourcesOpen && (
+        <ResourcePicker
+          existing={files}
+          onClose={() => setResourcesOpen(false)}
+          onAttach={(selected) =>
+            setFiles((old) =>
+              [
+                ...new Map(
+                  [...old, ...selected].map((file) => [file.id, file]),
+                ).values(),
+              ].slice(0, 10),
+            )
+          }
+        />
+      )}
       {trace && !compactContext && (
         <AgentInspector
           run={watched}

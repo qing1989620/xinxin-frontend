@@ -266,6 +266,7 @@
 }
 .routing-method > div {
   display: flex;
+  flex-wrap: wrap;
   gap: 20px;
   margin: 16px 0 13px;
 }
@@ -285,6 +286,31 @@
   font-size: 10px;
   color: var(--muted);
   line-height: 1.8;
+}
+.routing-channel-tags {
+  display: block;
+  color: var(--accent);
+  font-size: 9px;
+  margin-top: 7px;
+}
+.skill-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin-block: 18px;
+  font-size: 11px;
+}
+.skill-markdown th,
+.skill-markdown td {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  min-width: 95px;
+  text-align: left;
+}
+.skill-markdown th {
+  background: var(--paper);
+  font-weight: 500;
 }
 .routing-results > .empty {
   min-height: 350px;

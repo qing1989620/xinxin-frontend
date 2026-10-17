@@ -58,18 +58,38 @@ let base =
   localStorage.getItem("xinxin-server") || import.meta.env.VITE_API_BASE || "";
 
 export async function restoreSession() {
-  if (Capacitor.isNativePlatform())
-    token = (await Preferences.get({ key: "session" })).value || "";
+  if (Capacitor.isNativePlatform()) {
+    const [session, origin] = await Promise.all([
+      Preferences.get({ key: "session" }),
+      Preferences.get({ key: "session-origin" }),
+    ]);
+    token = origin.value === base ? session.value || "" : "";
+  }
 }
 export async function setSession(value: string) {
   token = value;
   if (value) sessionStorage.setItem("xinxin-session", value);
   else sessionStorage.removeItem("xinxin-session");
+  if (!value) window.dispatchEvent(new Event("xinxin-session-cleared"));
   if (Capacitor.isNativePlatform())
-    await Preferences.set({ key: "session", value });
+    await Promise.all([
+      Preferences.set({ key: "session", value }),
+      Preferences.set({ key: "session-origin", value: base }),
+    ]);
 }
 export const hasSession = () => Boolean(token);
 export const getServer = () => base;
+export function isPrivateIPv4(hostname: string) {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return false;
+  const parts = hostname.split(".").map(Number);
+  return (
+    parts.length === 4 &&
+    parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+    (parts[0] === 10 ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31))
+  );
+}
 export function setServer(value: string) {
   const trimmed = value.trim().replace(/\/+$/, "");
   if (trimmed) {
@@ -84,7 +104,12 @@ export function setServer(value: string) {
       throw new Error("请输入完整的 HTTP(S) 服务地址");
     if (
       url.protocol === "http:" &&
-      !["localhost", "127.0.0.1", "::1"].includes(url.hostname)
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+      !(
+        import.meta.env.VITE_LOCAL_PHONE_TEST === "1" &&
+        Capacitor.isNativePlatform() &&
+        isPrivateIPv4(url.hostname)
+      )
     )
       throw new Error("远程连接请使用 HTTPS 地址");
   }
@@ -176,10 +201,66 @@ export const post = <T = any>(path: string, data: any) =>
 export const put = <T = any>(path: string, data: any) =>
   api<T>(path, { method: "PUT", body: JSON.stringify(data) });
 export const remove = (path: string) => api(path, { method: "DELETE" });
-export async function upload(file: File) {
-  const body = new FormData();
-  body.append("file", file);
-  return api<FileItem>("/files", { method: "POST", body });
+export const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+export async function upload(
+  file: File,
+  options: {
+    signal?: AbortSignal;
+    onProgress?: (sent: number, total: number) => void;
+    requestId?: string;
+  } = {},
+): Promise<FileItem> {
+  if (!file.size) throw new Error("文件为空");
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error("单个文件最多 64 MB");
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    const cleanup = () => options.signal?.removeEventListener("abort", abort);
+    request.open("POST", url("/files"));
+    request.timeout = 180000;
+    if (token) request.setRequestHeader("Authorization", `Bearer ${token}`);
+    request.setRequestHeader(
+      "X-Upload-ID",
+      options.requestId || crypto.randomUUID(),
+    );
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable)
+        options.onProgress?.(event.loaded, event.total);
+    };
+    request.onerror = () => {
+      cleanup();
+      reject(new Error("上传连接中断，请检查网络后重试"));
+    };
+    request.ontimeout = () => {
+      cleanup();
+      reject(new Error("上传超时，可在当前队列中重试"));
+    };
+    request.onabort = () => {
+      cleanup();
+      reject(new DOMException("上传已取消", "AbortError"));
+    };
+    request.onload = async () => {
+      cleanup();
+      try {
+        const response = new Response(request.responseText, {
+          status: request.status,
+        });
+        if (request.status < 200 || request.status >= 300)
+          await responseError(response);
+        resolve(await response.json());
+      } catch (error) {
+        reject(error);
+      }
+    };
+    if (options.signal?.aborted) {
+      reject(new DOMException("上传已取消", "AbortError"));
+      return;
+    }
+    options.signal?.addEventListener("abort", abort, { once: true });
+    const body = new FormData();
+    body.append("file", file);
+    request.send(body);
+  });
 }
 export async function getBlob(path: string, signal?: AbortSignal) {
   const response = await timedFetch(url(path), {

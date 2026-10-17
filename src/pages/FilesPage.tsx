@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowUpRight,
@@ -10,7 +10,8 @@ import {
   Trash2,
   UploadCloud,
 } from "lucide-react";
-import { api, upload, remove, download, type FileItem } from "../api";
+import { api, remove, download, type FileItem } from "../api";
+import { UploadQueue, useUploads } from "../Uploads";
 import {
   Dialog,
   Empty,
@@ -27,7 +28,6 @@ import {
 export default function FilesPage() {
   const { data, error, reload } = useResource<FileItem[]>("/files"),
     [query, setQuery] = useState(""),
-    [busy, setBusy] = useState(false),
     [preview, setPreview] = useState<FileItem | null>(null),
     [text, setText] = useState(""),
     [textBusy, setTextBusy] = useState(false),
@@ -38,20 +38,17 @@ export default function FilesPage() {
     previewId = useRef(""),
     toast = useToast(),
     navigate = useNavigate();
-  async function receive(files: FileList | File[]) {
-    setBusy(true);
-    try {
-      for (const file of Array.from(files)) {
-        const result = await upload(file);
-        if (result.parse_error) toast(result.parse_error, true);
-      }
-      reload();
-      toast("资料已放进私人空间");
-    } catch (error) {
-      toast((error as Error).message, true);
-    } finally {
-      setBusy(false);
-    }
+  const uploads = useUploads();
+  const completed = uploads.entries.filter(
+    (entry) => entry.state === "completed",
+  ).length;
+  useEffect(() => {
+    reload();
+  }, [completed]);
+  function receive(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (uploads.add(list).length < list.length)
+      toast("上传队列已满，请先清除已结束记录", true);
   }
   async function open(file: FileItem) {
     previewId.current = file.id;
@@ -80,17 +77,16 @@ export default function FilesPage() {
   return (
     <div className="page-enter">
       <PageHeader
-        overline="PRIVATE KNOWLEDGE"
-        title="私人资料"
-        description="文档、表格、图片与交付物，成为你和 Agent 的共同上下文。"
+        overline="YOUR RESOURCE LIBRARY"
+        title="私人资源库"
+        description="从手机上传，交给 Xinxin 处理，再把结果带走。你的文件，随时接着用。"
         action={
           <button
             className="button primary"
             onClick={() => picker.current?.click()}
-            disabled={busy}
           >
             <Plus size={17} />
-            {busy ? "正在上传…" : "添加资料"}
+            上传资源
           </button>
         }
       />
@@ -115,12 +111,13 @@ export default function FilesPage() {
         <UploadCloud size={24} strokeWidth={1.3} />
         <div>
           <strong>把文件放在这里</strong>
-          <p>支持 PDF、Word、Markdown、CSV 和图片 · 单文件最多 24 MB</p>
+          <p>支持文档、图片、表格、压缩包等原文件 · 单个最多 64 MB</p>
         </div>
         <button className="text-button" onClick={() => picker.current?.click()}>
           选择文件 <ArrowUpRight size={16} />
         </button>
       </div>
+      <UploadQueue />
       <div className="toolbar">
         <label className="search-field wide">
           <Search size={17} />
@@ -150,6 +147,9 @@ export default function FilesPage() {
           检索正文 <ArrowUpRight size={15} />
         </button>
         <span className="muted small-text">{data.length} 份资料</span>
+        <button className="text-button" onClick={reload}>
+          刷新资源
+        </button>
       </div>
       {results ? (
         <section className="search-results">
@@ -324,6 +324,7 @@ export default function FilesPage() {
               onClick={() =>
                 navigate("/agent", {
                   state: {
+                    files: [preview],
                     prompt: `帮我分析私人文件「${preview.name}」，文件 ID 是 ${preview.id}。请引用原文，先读取文件再回答。`,
                   },
                 })

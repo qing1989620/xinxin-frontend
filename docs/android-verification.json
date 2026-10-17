@@ -1,19 +1,17 @@
 {
-  "app_id": "com.xinxin.personal",
-  "version": "0.1.0",
+  "apk": "releases/Xinxin-0.1.0-local-test.apk",
+  "build": "debug-local-network",
+  "bytes": 4912321,
+  "sha256": "382a7a9f7c76361b55941c33b1febec0281b1d8db15624da9e691de01b248379",
+  "web_assets_matched": 18,
+  "native_allow_mixed_content": true,
+  "real_device_verified": false,
+  "signature_verified": true,
+  "signature_schemes": [
+    "v2"
+  ],
+  "package": "com.xinxin.personal",
   "min_sdk": 24,
   "target_sdk": 36,
-  "artifact": "Xinxin-0.1.0-debug.apk",
-  "bytes": 4912321,
-  "sha256": "c347b36db38dbaed3a1cf390e9affbf33a02fca6e2bdf5bb2b352ac5ea15977e",
-  "apksigner_verified": true,
-  "signature_scheme": "v2",
-  "build": "debug, for personal sideload",
-  "permissions": [
-    "INTERNET",
-    "signature-only DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
-  ],
-  "physical_device_tested": false,
-  "web_assets_match_production_build": true,
-  "web_assets_compared": 18
+  "release_manifest_cleartext": false
 }

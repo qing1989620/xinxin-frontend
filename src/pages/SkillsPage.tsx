@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import SkillSphere from "./SkillSphere";
 import {
   ArrowUpRight,
@@ -34,8 +35,19 @@ type Skill = {
   tools: string[];
   relations: [string, string][];
   score?: number;
+  channels?: Record<string, number>;
 };
-type Selection = {
+type SkillStatus = {
+  encoder: {
+    kind: string;
+    degraded?: boolean;
+    reason?: string;
+    model?: string;
+  };
+  weights: number[];
+  skill_count: number;
+};
+type Selection = SkillStatus & {
   query: string;
   skills: Skill[];
   dependencies: Skill[];
@@ -46,7 +58,9 @@ type Selection = {
 export default function SkillsPage() {
   const request = useRef(0);
   const { data, error, reload } = useResource<Skill[]>("/skills"),
-    [tab, setTab] = useState("library"),
+    { data: status, error: statusError } =
+      useResource<SkillStatus>("/skills/status"),
+    [tab, setTab] = useState("sphere"),
     [filter, setFilter] = useState("all"),
     [query, setQuery] = useState(""),
     [layout, setLayout] = useState("grid"),
@@ -58,7 +72,12 @@ export default function SkillsPage() {
     navigate = useNavigate();
   async function open(skill: Pick<Skill, "id">) {
     try {
-      setDetail({ ...skill, ...(await api(`/skills/${skill.id}`)) });
+      const result = await api<any>(`/skills/${skill.id}`);
+      setDetail({
+        ...skill,
+        ...result,
+        name: data?.find((item) => item.id === skill.id)?.name || result.name,
+      });
     } catch (error) {
       toast((error as Error).message, true);
     }
@@ -94,6 +113,7 @@ export default function SkillsPage() {
       (skill) => [skill.id, skill],
     ),
   );
+  const method = selection || status;
   return (
     <div className="page-enter skills-v2">
       <PageHeader
@@ -137,7 +157,19 @@ export default function SkillsPage() {
         </button>
       </div>
       {tab === "sphere" ? (
-        <SkillSphere nodes={data} onOpen={(node) => void open(node)} />
+        <SkillSphere
+          nodes={data}
+          semantic={status || undefined}
+          statusError={Boolean(statusError)}
+          onOpen={(node) => void open(node)}
+          onRun={(node) =>
+            navigate("/agent", {
+              state: {
+                prompt: `Xinxin，请先加载 ${node.id}（${node.name}）技能，帮我处理一个相关任务。先结合我的目标确认必要输入与本轮权限。`,
+              },
+            })
+          }
+        />
       ) : tab === "library" ? (
         <>
           <div className="skill-library-toolbar">
@@ -292,16 +324,35 @@ export default function SkillsPage() {
               <span className="eyebrow">本地检索 + 反馈学习</span>
               <div>
                 <span>
-                  BM25<strong>75%</strong>
+                  关键词
+                  <strong>
+                    {method ? `${Math.round(method.weights[0] * 100)}%` : "…"}
+                  </strong>
                 </span>
                 <span>
-                  词法向量<strong>25%</strong>
+                  {method?.encoder.kind === "dense-onnx"
+                    ? "E5 语义"
+                    : "词法向量"}
+                  <strong>
+                    {method ? `${Math.round(method.weights[1] * 100)}%` : "…"}
+                  </strong>
+                </span>
+                <span>
+                  领域标签
+                  <strong>
+                    {method ? `${Math.round(method.weights[2] * 100)}%` : "…"}
+                  </strong>
                 </span>
                 <span>
                   LinUCB<strong>反馈后参与</strong>
                 </span>
               </div>
-              <p>此处预览相关度与依赖；执行授权在对话中单独选择。</p>
+              <p>
+                {method?.encoder.degraded &&
+                  "语义模型未就绪，当前已回退词法检索。"}
+                评分表示候选的相对排序。Xinxin
+                会按任务需要选择，不会自动调用全部候选；执行权限由你在对话中设置。
+              </p>
             </div>
           </section>
           <section className="routing-results desk-panel">
@@ -328,6 +379,24 @@ export default function SkillsPage() {
                       <span>
                         <strong>{skill.name}</strong>
                         <small>{skill.description}</small>
+                        {skill.channels && (
+                          <span className="routing-channel-tags">
+                            {Object.keys(skill.channels)
+                              .map(
+                                (channel) =>
+                                  ({
+                                    bm25: "关键词",
+                                    vector:
+                                      selection.encoder.kind === "dense-onnx"
+                                        ? "语义"
+                                        : "词法向量",
+                                    structural: "领域标签",
+                                  })[channel],
+                              )
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        )}
                         <span className="rank-meter">
                           <i
                             style={{
@@ -344,7 +413,7 @@ export default function SkillsPage() {
                   ))}
                 </div>
                 <div className="routing-order">
-                  <p className="eyebrow">考虑依赖后的建议顺序</p>
+                  <p className="eyebrow">候选能力的依赖顺序 · 执行时按需选择</p>
                   <div>
                     {selection.order.map((id, index) => (
                       <button key={id} onClick={() => void open(byId.get(id)!)}>
@@ -399,7 +468,27 @@ export default function SkillsPage() {
             </button>
           </div>
           <div className="markdown skill-markdown">
-            <ReactMarkdown skipHtml>
+            {detail.provenance && (
+              <p className="skill-provenance">
+                来源：
+                <a
+                  href={detail.provenance.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {detail.provenance.repository}
+                </a>{" "}
+                · {detail.provenance.license}
+                <br />
+                固定版本 {detail.provenance.revision.slice(0, 12)}
+                ，保留原始参考包。方法说明已接入；脚本与外部依赖须按任务检查，未经自动执行认证。
+              </p>
+            )}
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              skipHtml
+              components={{ img: ({ alt }) => <span>[参考图片：{alt}]</span> }}
+            >
               {String(detail.markdown || "").replace(
                 /^---\r?\n[\s\S]*?\r?\n---\r?\n/,
                 "",
