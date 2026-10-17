@@ -8,6 +8,8 @@ coverage/
 .vite/
 .turbo/
 .cache/
+.toolchains/
+releases/
 *.tsbuildinfo
 *.log
 .env
