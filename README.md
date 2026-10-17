@@ -27,8 +27,8 @@ npm run build
 
 生产资源在 `dist/`，PWA 只缓存静态界面，不缓存私人 API/文件。可通过 `VITE_API_BASE` 指定 HTTPS API 地址，VITE 变量不能放密钥。Android 仅为客户端，任务在独立后端运行。
 
-[需求规格](docs/product-spec.md)、[快速审查与验收](docs/quick-review.md)。当前已实现本地版本；GitHub 保存源代码，私人数据留独立后端，云部署后续进行。生产预览使用 `npm run preview -- --port 5188`，仍代理本机 8000 后端。
+[需求规格](docs/product-spec.md)、[快速审查与验收](docs/quick-review.md)。主人已验收电脑与旧局域网APK，并授权GitHub推送和杭州部署。前端与后端已部署，服务器内部验收通过；公网受ICP检查拦截。最新选择保留按量实例，手机通过Tailscale私有连接，服务器已绑定账号，等待启用Serve/HTTPS及手机验收。生产预览使用 `npm run preview -- --port 5188`，仍代理本机8000后端。
 
 审查流程：[audit-plan.md](docs/audit-plan.md)。
 
-本轮更新：粒子技能中心、多文件资源上传与附件选择、Android局域网调试包。见 [本轮审查](docs/skill-persona-review.md) 和 [Android联调](docs/android.md)。本轮仅本地提交，等待主人本地和真机验收、明确通知后再推送。
+粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android已支持私人发布签名和预填HTTPS后端；签名密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。Tailscale私有HTTPS就绪后可在已有APK填新地址，新发布包的实体手机连接需单独验证。
