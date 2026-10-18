@@ -185,6 +185,7 @@ export default function AgentInspector({
                                 finished: "本轮结束",
                                 cancelling: "正在停止",
                                 artifacts: "交付物已保存",
+                                "assistant.progress": "Xinxin 的进度",
                               }[event.kind] || event.kind}
                       </strong>
                       {event.kind === "tool.started" && (
@@ -194,6 +195,9 @@ export default function AgentInspector({
                       )}
                       {event.data.error && (
                         <p className="inspector-error">{event.data.error}</p>
+                      )}
+                      {event.kind === "assistant.progress" && (
+                        <p>{event.data.text}</p>
                       )}
                       {event.kind.startsWith("tool.") && (
                         <details>

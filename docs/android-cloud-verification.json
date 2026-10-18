@@ -2,7 +2,7 @@
   "apk": "releases/Xinxin-0.1.0-cloud.apk",
   "build": "release-private-https",
   "bytes": 3460900,
-  "sha256": "c183b0ed0734e82f147a641667cc09f8791abfcd235917fa7e1087f363cf1ab4",
+  "sha256": "ebdac7708aa76e2162ba10487f5865ebfbe6e071528f6774c5a6ff1beff8db1f",
   "web_assets_matched": 18,
   "native_allow_mixed_content": false,
   "real_device_verified": false,

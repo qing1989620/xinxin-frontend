@@ -294,9 +294,13 @@ export default function TasksPage() {
                               finished: "任务结束",
                               artifacts: "交付物已保存",
                               cancelling: "正在停止",
+                              "assistant.progress": "Xinxin 的进度",
                             }[event.kind] || event.kind}
                           </strong>
                           {event.data.name && <code>{event.data.name}</code>}
+                          {event.kind === "assistant.progress" && (
+                            <p>{event.data.text}</p>
+                          )}
                           {event.kind === "tool.completed" && (
                             <details>
                               <summary>查看返回结果</summary>

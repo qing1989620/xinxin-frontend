@@ -126,6 +126,46 @@ describe("resource uploads", () => {
 });
 
 describe("private transport boundaries", () => {
+  it("replays progress separately and preserves final Markdown across reconnects", async () => {
+    const { setSession, watchRun } = await import("../src/api");
+    const { nextAssistantText } = await import("../src/runText");
+    await setSession("local-test");
+    const final = "检查完成。\n\n```text\n/demo\n```\n\n- 已核对";
+    const frame = (seq: number, kind: string, text: string) =>
+      `id: ${seq}\ndata: ${JSON.stringify({ seq, kind, data: { text } })}\n\n`;
+    const progress: string[] = [];
+    let draft = "",
+      streams = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (!input.includes("/events"))
+          return new Response('{"status":"running"}');
+        streams++;
+        if (streams === 2) expect(input).toContain("after=2");
+        const content =
+          streams === 1
+            ? frame(1, "delta", "我先看看。") +
+              frame(2, "assistant.progress", "我先看看。")
+            : frame(3, "delta", final.slice(0, 8)) +
+              frame(2, "assistant.progress", "我先看看。") +
+              frame(4, "delta", final.slice(8)) +
+              "event: end\ndata: {}\n\n";
+        return new Response(content);
+      }),
+    );
+    await watchRun(
+      "task",
+      (event) => {
+        draft = nextAssistantText(draft, event);
+        if (event.kind === "assistant.progress") progress.push(event.data.text);
+      },
+      new AbortController().signal,
+    );
+    expect(progress).toEqual(["我先看看。"]);
+    expect(draft).toBe(final);
+    expect(streams).toBe(2);
+  });
   it("does not restore a native credential from a different backend even if preference clearing is unfinished", async () => {
     const { Capacitor } = await import("@capacitor/core");
     vi.spyOn(Capacitor, "isNativePlatform").mockReturnValue(true);

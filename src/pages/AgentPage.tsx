@@ -40,6 +40,7 @@ import {
   type Run,
   type ServerItem,
 } from "../api";
+import { nextAssistantText } from "../runText";
 import {
   Empty,
   Status,
@@ -212,10 +213,10 @@ export default function AgentPage() {
             old.some((item) => item.seq === event.seq) ? old : [...old, event],
           );
         if (
-          event.kind === "delta" &&
+          ["delta", "assistant.progress"].includes(event.kind) &&
           ["queued", "running", "cancelling"].includes(watched.status)
         )
-          setStream((old) => old + event.data.text);
+          setStream((old) => nextAssistantText(old, event));
         if (event.kind === "started")
           setActive((old) => (old ? { ...old, status: "running" } : old));
         if (event.kind === "finished") {

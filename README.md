@@ -27,8 +27,8 @@ npm run build
 
 生产资源在 `dist/`，PWA 只缓存静态界面，不缓存私人 API/文件。可通过 `VITE_API_BASE` 指定 HTTPS API 地址，VITE 变量不能放密钥。Android 仅为客户端，任务在独立后端运行。
 
-[需求规格](docs/product-spec.md)、[快速审查与验收](docs/quick-review.md)。主人已验收电脑与旧局域网APK，并授权GitHub推送和杭州部署。公开域名受ICP检查拦截，最新选择保留按量实例，通过Tailscale私有连接。绑定与Serve/HTTPS已启用，服务自身的HTTPS/API/文件/模型/SSE与APK下载验证通过，另一节点和手机换网仍待验收。生产预览使用 `npm run preview -- --port 5188`，仍代理本机8000后端。
+[需求规格](docs/product-spec.md)、[快速审查与验收](docs/quick-review.md)。主人已验收电脑与旧局域网APK，并授权GitHub推送和杭州部署。公开域名受ICP检查拦截，最新选择保留按量实例，通过Tailscale私有连接。绑定与Serve/HTTPS已启用，服务自身的HTTPS/API/文件/模型/SSE与APK下载验证通过。2026-10-18主人报告手机实际完成云服务器查看；手机换网和新版APK仍单独记录。生产预览使用 `npm run preview -- --port 5188`，仍代理本机8000后端。
 
 审查流程：[audit-plan.md](docs/audit-plan.md)。
 
-粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android包已预填实际私有HTTPS地址并签名；密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。已有APK也可手填私有HTTPS地址；新发布包的实体手机连接需单独验证。
+粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android包已预填实际私有HTTPS地址并签名；密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。已有APK也可手填私有HTTPS地址；新发布包的实体手机连接需单独验证。任务进度与最终答复分离、断线回放与11项测试见 [response-review.md](docs/response-review.md)，Markdown正文和复制保持原样。
