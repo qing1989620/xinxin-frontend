@@ -31,4 +31,4 @@ npm run build
 
 审查流程：[audit-plan.md](docs/audit-plan.md)。
 
-粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android包已预填实际私有HTTPS地址并签名；密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。已有APK也可手填私有HTTPS地址；新发布包的实体手机连接需单独验证。最新24项测试通过：聊天直接显示公开进度、计划与命令输出；按会话选择80K/300K/1000K；断线恢复实际终态；永久删除先预览和确认，归档独立保留。预算与上下文分别显示，旧后端不支持的参数明确拒绝。见 [本轮局部审查和截图](docs/agent-runtime-review.md)，Markdown正文和复制保持原样。
+粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android包预填实际私有HTTPS地址并签名；密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。最新34项测试、类型检查及生产构建通过：聊天穿插可理解的公开文字，终端默认折叠；预算耗尽直接续接原任务；批量选择/预览/确认删除，记忆勾选可操作且先说明权限；图片鉴权预览与失败重试兼容旧WebView；一级Agent恢复原会话，离开/重开补回云端进度；手机输入默认一行、最多四行再内部滚动。保留80K/300K/1000K档位与独立累计预算。见 [本轮局部审查与截图](docs/agent-usability-review.md)。最终APK签名/18项资源/私有HTTPS下载散列已核验，新版实体手机覆盖安装仍待主人复测。
