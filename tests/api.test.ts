@@ -126,6 +126,72 @@ describe("resource uploads", () => {
 });
 
 describe("private transport boundaries", () => {
+  it.each([80000, 300000, 1048576])(
+    "sends the selected %i context independently from the cumulative token budget",
+    async (tier) => {
+      const { setSession } = await import("../src/api");
+      const { submitAgentRun } = await import("../src/runSubmission");
+      await setSession("local-test");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string, options?: RequestInit) => {
+          if (input.endsWith("/settings"))
+            return new Response(
+              JSON.stringify({
+                model_configured: true,
+                capabilities: { context_tiers: true, run_token_budget: true },
+                execution_limits: {
+                  max_calls: 128,
+                  max_seconds: 7200,
+                  max_total_tokens: 100000000,
+                },
+              }),
+            );
+          const sent = JSON.parse(String(options?.body));
+          expect(sent.context_window_tokens).toBe(tier);
+          expect(sent.max_total_tokens).toBe(8000000);
+          return new Response('{"id":"tier-accepted"}');
+        }),
+      );
+      expect(
+        (
+          await submitAgentRun({
+            task: "synthetic",
+            conversation_id: null,
+            server_id: null,
+            permission: "read",
+            max_calls: 64,
+            max_seconds: 3600,
+            max_total_tokens: 8000000,
+            context_window_tokens: tier,
+            allow_memory: false,
+            file_ids: [],
+          })
+        ).id,
+      ).toBe("tier-accepted");
+    },
+  );
+  it("does not silently omit a context choice when connected to an old server", async () => {
+    const { submitAgentRun } = await import("../src/runSubmission");
+    const request = vi.fn(
+      async () => new Response('{"model_configured":true}'),
+    );
+    vi.stubGlobal("fetch", request);
+    await expect(
+      submitAgentRun({
+        task: "synthetic",
+        conversation_id: null,
+        server_id: null,
+        permission: "read",
+        max_calls: 8,
+        max_seconds: 300,
+        context_window_tokens: 80000,
+        allow_memory: false,
+        file_ids: [],
+      }),
+    ).rejects.toThrow("不支持会话上下文档位");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it("recovers the terminal state when the event stream ends before finished", async () => {
     const { watchRun, setSession } = await import("../src/api");
     await setSession("local-test");

@@ -391,8 +391,10 @@ export default function AgentInspector({
           {Number(
             usage.context_tokens_estimate || usage.prompt_tokens_last || 0,
           ).toLocaleString()}{" "}
-          / {Number(usage.context_window_tokens || 1048576).toLocaleString()}{" "}
-          tokens
+          /{" "}
+          {usage.context_window_tokens || run?.context_window_tokens
+            ? `${Number(usage.context_window_tokens || run?.context_window_tokens).toLocaleString()} tokens`
+            : "旧轮次未记录档位"}
         </span>
         <span>
           <Clock3 size={13} />

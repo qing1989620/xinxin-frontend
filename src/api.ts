@@ -27,6 +27,7 @@ export type Run = {
   max_calls?: number;
   max_seconds?: number;
   max_total_tokens?: number;
+  context_window_tokens?: number | null;
   allow_memory?: boolean | number;
 };
 export type RecordItem = {
@@ -193,6 +194,7 @@ function validationMessage(detail: unknown): string {
     max_calls: "模型调用次数",
     max_seconds: "执行时间",
     max_total_tokens: "累计令牌预算",
+    context_window_tokens: "上下文档位",
     file_ids: "附件",
     request_key: "请求标识",
     server_id: "目标服务器",

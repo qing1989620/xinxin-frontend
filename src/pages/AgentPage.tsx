@@ -66,6 +66,7 @@ type Detail = {
   id: string;
   title: string;
   archived: number;
+  context_window_tokens?: number;
   messages: {
     id: string;
     role: string;
@@ -124,6 +125,8 @@ export default function AgentPage() {
     [stream, setStream] = useState(""),
     [busy, setBusy] = useState(false),
     [cancelPending, setCancelPending] = useState(false),
+    [contextWindow, setContextWindow] = useState(1048576),
+    [contextSaving, setContextSaving] = useState(false),
     [trace, setTrace] = useState(
       () => matchMedia("(min-width: 1280px)").matches,
     ),
@@ -158,6 +161,7 @@ export default function AgentPage() {
     draftRef = useRef<HTMLTextAreaElement>(null),
     currentCid = useRef(cid),
     executionDefaultsApplied = useRef(false),
+    contextRevision = useRef(0),
     archiveMode = useRef(showArchived);
   currentCid.current = cid;
   archiveMode.current = showArchived;
@@ -186,11 +190,14 @@ export default function AgentPage() {
     if (archiveMode.current === mode) setConversations(result);
   }
   async function loadConversation(id: string) {
+    const revision = contextRevision.current;
     if (!/^[a-f0-9]{32}$/i.test(id)) throw new ApiError("对话链接无效", 404);
     const detail = await api<Detail>(`/conversations/${id}`);
     if (currentCid.current !== id) return;
     setMessages(detail.messages);
     setRuns(detail.runs);
+    if (revision === contextRevision.current)
+      setContextWindow(detail.context_window_tokens || 1048576);
     setTitle(detail.title);
     setArchived(Boolean(detail.archived));
     const latest = detail.runs[0] || null;
@@ -206,6 +213,8 @@ export default function AgentPage() {
       setMaxSeconds(ongoing.max_seconds ?? 900);
       setMaxTotalTokens(ongoing.max_total_tokens ?? 320000);
       setAllowMemory(Boolean(ongoing.allow_memory));
+      if (ongoing.context_window_tokens)
+        setContextWindow(ongoing.context_window_tokens);
     } else setAllowMemory(false);
     setWatched(latest);
     if (latest) {
@@ -312,7 +321,7 @@ export default function AgentPage() {
     });
   }, [messages.length, stream, follow, events.at(-1)?.seq]);
   async function send() {
-    if (!draft.trim() || busy || active || archived) return;
+    if (!draft.trim() || busy || active || archived || contextSaving) return;
     if (!settings.data) {
       toast("正在读取后端能力，请稍候再提交。", true);
       return;
@@ -328,6 +337,9 @@ export default function AgentPage() {
         server_id: server || null,
         max_calls: maxCalls,
         max_seconds: maxSeconds,
+        ...(settings.data.capabilities?.context_tiers
+          ? { context_window_tokens: contextWindow }
+          : {}),
         ...(settings.data.capabilities?.run_token_budget
           ? { max_total_tokens: maxTotalTokens }
           : {}),
@@ -371,6 +383,8 @@ export default function AgentPage() {
     setFiles([]);
     setMobileHistory(false);
     setArchived(false);
+    contextRevision.current++;
+    setContextWindow(1048576);
     draftRef.current?.focus();
   }
   const history = (
@@ -503,9 +517,14 @@ export default function AgentPage() {
                 {settings.data?.context_window_tokens && (
                   <span
                     className="context-capacity"
-                    title={`${settings.data.context_window_tokens.toLocaleString()} tokens`}
+                    title={`${contextWindow.toLocaleString()} tokens`}
                   >
-                    1M 上下文
+                    {contextWindow === 80000
+                      ? "80K"
+                      : contextWindow === 300000
+                        ? "300K"
+                        : "1000K"}{" "}
+                    上下文
                   </span>
                 )}
                 <span className="agent-model-divider" aria-hidden="true">
@@ -861,6 +880,41 @@ export default function AgentPage() {
                     可保存记忆
                   </span>
                 )}
+                {settings.data?.capabilities?.context_tiers && (
+                  <select
+                    className="context-select"
+                    aria-label="会话上下文档位"
+                    value={contextWindow}
+                    disabled={active !== null || contextSaving}
+                    onChange={async (event) => {
+                      const choice = Number(event.target.value);
+                      contextRevision.current++;
+                      if (!cid) {
+                        setContextWindow(choice);
+                        return;
+                      }
+                      const target = cid;
+                      setContextSaving(true);
+                      try {
+                        await put(`/conversations/${target}/context`, {
+                          context_window_tokens: choice,
+                        });
+                        if (currentCid.current === target)
+                          setContextWindow(choice);
+                      } catch (error) {
+                        toast((error as Error).message, true);
+                      } finally {
+                        setContextSaving(false);
+                      }
+                    }}
+                  >
+                    {settings.data.context_tiers?.map((tier) => (
+                      <option key={tier.tokens} value={tier.tokens}>
+                        {tier.label} 上下文
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               {active ? (
                 <button
@@ -903,7 +957,7 @@ export default function AgentPage() {
                 <button
                   className="send-button"
                   aria-label="发送任务"
-                  disabled={!draft.trim() || busy || archived}
+                  disabled={!draft.trim() || busy || archived || contextSaving}
                   onClick={() => void send()}
                 >
                   <ArrowUp size={20} />
@@ -1225,7 +1279,11 @@ export default function AgentPage() {
               <p className="field-help">
                 模型上下文窗口：
                 {settings.data.context_window_tokens.toLocaleString()}{" "}
-                tokens（1M）。上面的累计用量统计多次调用，与一次能保留的上下文长度分别计算。仅在接近窗口时回收旧交换，历史执行记录仍保存在本对话。
+                tokens（模型上限）。此对话选择{" "}
+                {contextWindow === 1048576
+                  ? "1000K"
+                  : `${contextWindow / 1000}K`}{" "}
+                档位，并预留工具协议和输出空间。上面的累计用量统计多次调用，与上下文长度分别计算；只有接近所选窗口才回收旧交换，持久历史仍保留。
               </p>
             )}
             <p className="field-help">

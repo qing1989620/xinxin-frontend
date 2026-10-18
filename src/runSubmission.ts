@@ -4,6 +4,7 @@ export type AgentSettings = {
   model: string;
   model_configured: boolean;
   context_window_tokens?: number;
+  context_tiers?: { label: string; tokens: number }[];
   execution_defaults?: {
     max_calls: number;
     max_seconds: number;
@@ -20,6 +21,7 @@ export type AgentSettings = {
     command_progress?: boolean;
     context_checkpoints?: boolean;
     conversation_delete?: boolean;
+    context_tiers?: boolean;
   };
 };
 
@@ -31,12 +33,18 @@ export type RunSubmission = {
   max_calls: number;
   max_seconds: number;
   max_total_tokens?: number;
+  context_window_tokens?: number;
   allow_memory: boolean;
   file_ids: string[];
 };
 
 export async function submitAgentRun(payload: RunSubmission): Promise<Run> {
   const settings = await api<AgentSettings>("/settings");
+  if (
+    payload.context_window_tokens !== undefined &&
+    !settings.capabilities?.context_tiers
+  )
+    throw new Error("当前后端不支持会话上下文档位，请刷新连接或更新后端。");
   const limits = settings.execution_limits || {
     max_calls: 20,
     max_seconds: 1800,

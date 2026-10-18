@@ -1073,6 +1073,24 @@
   font-size: 10px;
   flex-shrink: 0;
 }
+.context-select {
+  max-width: 140px;
+  padding: 6px 4px;
+  border: 1px solid var(--line, #deded6);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+}
+@media (max-width: 760px) {
+  .agent-v2 .composer-toolbar > div {
+    flex-wrap: wrap;
+  }
+  .context-select {
+    max-width: 125px;
+    font-size: 10px;
+  }
+}
 .inspector-footer {
   flex-wrap: wrap;
 }
