@@ -20,6 +20,6 @@
   "release_manifest_cleartext": false,
   "system_backup_allowed": false,
   "access_mode": "private-tailnet",
-  "private_https_access": "waiting_for_owner_to_enable_serve",
+  "private_https_access": "server_self_verified_over_tailnet_address",
   "owner_reported_local_apk_acceptance": "2026-10-17"
 }

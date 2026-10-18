@@ -21,6 +21,6 @@
 
 ## 未验证 / 阻塞
 
-此前公网HTTP实测是阿里云 `Non-compliance ICP Filing` 403，HTTPS被上游中断；用户确认未备案。主人最新选择保留杭州按量实例，通过Tailscale私有连接手机。新增 `deploy/Caddyfile.tailnet`，只监听回环8088，保留原上传限额、API no-store、静态安全头与SSE即时转发；真实Caddy validate、私有Host静态页面、回环健康、API401和监听地址核对通过。精确私有与原生CORS预检通过，无关origin拒绝；前端10项测试通过。服务器已绑定账号，私有HTTPS等待主人开启Serve，尚未验证另一私有节点访问。
+此前公网HTTP实测是阿里云 `Non-compliance ICP Filing` 403，HTTPS被上游中断；用户确认未备案。主人最新选择保留杭州按量实例，通过Tailscale私有连接手机。新增 `deploy/Caddyfile.tailnet`，只监听回环8088，保留原上传限额、API no-store、静态安全头与SSE即时转发；真实Caddy validate、私有Host静态页面、回环健康、API401和监听地址核对通过。精确私有与原生CORS预检通过，无关origin拒绝；前端10项测试通过。主人完成账号绑定与Serve/HTTPS开启，实际标准TLS验证、短期验收会话、上传/下载、真实模型SSE/回放、APK的MIME和SHA-256匹配通过。该次由服务自身通过真实Tailscale地址发起；私有名称由已认证节点映射解析，不是另一节点或实体手机测试。证据在后端独立仓库 `docs/private-mobile-runtime.json`，没有复制其源码或凭据进入前端。
 
 新Release真机安装与文件分享/软键盘/换网、私有PWA安装仍待测。旧局域网APK的主人验收不能替代这次发布包。Android与Clash轮流启用的限制、网络切换会短暂重连及安装签名差异已记录。没有把源码分析、手机尺寸模拟或服务内接口测试当成私有手机交付全部通过。

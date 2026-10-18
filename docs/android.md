@@ -24,7 +24,7 @@ $env:ANDROID_HOME='<AndroidSDK目录>'
 
 旧调试包与发布包签名不同，包名同为 `com.xinxin.personal`；首次安装发布包需先卸载调试版，手机端设置和令牌会清除，服务器资料保留。后续同发布签名可覆盖更新。已有APK也支持在连接页填写任意有效HTTPS后端，无需为了Tailscale放宽清文或关闭证书验证。
 
-手机需先开启Tailscale、登录与服务器相同的个人网络，再打开Xinxin。Tailscale官方Android客户端要求Android8.0及以上，高于Xinxin APK本身的Android7.0要求。Wi-Fi/移动流量切换可重新连接，不依赖电脑开机。同一Android系统VPN通道不能同时给Clash和Tailscale使用；开Clash时Xinxin暂不可连接，云端任务继续，切回Tailscale后获取进度。新私有HTTPS、发布包与实体手机换网尚待账号绑定后验证。
+手机需先开启Tailscale、登录与服务器相同的个人网络，再打开Xinxin。Tailscale官方Android客户端要求Android8.0及以上，高于Xinxin APK本身的Android7.0要求。Wi-Fi/移动流量切换可重新连接，不依赖电脑开机。同一Android系统VPN通道不能同时给Clash和Tailscale使用；开Clash时Xinxin暂不可连接，云端任务继续，切回Tailscale后获取进度。私有HTTPS已启用且服务自身API验证通过，新发布包与实体手机换网仍待单独验收。
 
 ## 局域网联调
 
