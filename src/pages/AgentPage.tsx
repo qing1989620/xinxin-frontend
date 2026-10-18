@@ -1,4 +1,11 @@
-import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -62,6 +69,7 @@ import {
   rememberedConversation,
   forgetConversation,
 } from "../conversationLocation";
+import { resizeComposer } from "../composerSizing";
 type Conversation = {
   id: string;
   title: string;
@@ -191,6 +199,30 @@ export default function AgentPage() {
     max_seconds: 1800,
     max_total_tokens: 1000000,
   };
+  useLayoutEffect(() => {
+    if (draftRef.current) resizeComposer(draftRef.current);
+  }, [draft]);
+  useEffect(() => {
+    const input = draftRef.current;
+    if (!input) return;
+    let width = input.clientWidth;
+    const resized = () => {
+      if (input.clientWidth !== width) {
+        width = input.clientWidth;
+        resizeComposer(input);
+      }
+    };
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(resized);
+    observer?.observe(input);
+    window.addEventListener("resize", resized);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", resized);
+    };
+  }, []);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -1019,7 +1051,7 @@ export default function AgentPage() {
                 archived ? "先恢复对话，再继续工作" : "说说你想完成什么…"
               }
               aria-label="给 Agent 的任务"
-              rows={3}
+              rows={1}
               maxLength={12000}
               disabled={archived}
               onKeyDown={(e) => {
