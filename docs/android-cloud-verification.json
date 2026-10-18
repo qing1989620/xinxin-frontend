@@ -21,5 +21,8 @@
   "system_backup_allowed": false,
   "access_mode": "private-tailnet",
   "private_https_access": "server_self_verified_over_tailnet_address",
-  "owner_reported_local_apk_acceptance": "2026-10-17"
+  "owner_reported_local_apk_acceptance": "2026-10-17",
+  "owner_reported_prior_private_cloud_agent_acceptance": "2026-10-18",
+  "prior_phone_report_does_not_verify_this_apk": true,
+  "private_download_sha256_verified_after_deployment": true
 }
