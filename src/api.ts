@@ -148,16 +148,33 @@ export function acknowledgeRequest(namespace: string) {
   sessionStorage.removeItem(`xinxin-request:${namespace}`);
 }
 
-async function timedFetch(input: string, options: RequestInit = {}) {
-  const signal = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)])
-    : AbortSignal.timeout(30000);
+async function timedFetch<T>(
+  input: string,
+  options: RequestInit,
+  read: (response: Response) => Promise<T>,
+) {
+  // Older Android WebViews support AbortController but not AbortSignal.any.
+  const controller = new AbortController();
+  let expired = false;
+  const cancel = () => controller.abort();
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort();
+  }, 30000);
+  if (options.signal?.aborted) cancel();
+  else options.signal?.addEventListener("abort", cancel, { once: true });
   try {
-    return await fetch(input, { ...options, signal });
+    const response = await fetch(input, {
+      ...options,
+      signal: controller.signal,
+    });
+    return await read(response);
   } catch (error) {
-    if ((error as Error).name === "TimeoutError")
-      throw new Error("连接超时，请检查后端地址和网络后重试");
+    if (expired) throw new Error("连接超时，请检查后端地址和网络后重试");
     throw error;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", cancel);
   }
 }
 
@@ -240,9 +257,10 @@ export async function api<T = any>(
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (options.body && !(options.body instanceof FormData))
     headers.set("Content-Type", "application/json");
-  const response = await timedFetch(url(path), { ...options, headers });
-  if (!response.ok) return responseError(response);
-  return response.json();
+  return timedFetch<T>(url(path), { ...options, headers }, async (response) => {
+    if (!response.ok) return responseError(response);
+    return response.json();
+  });
 }
 export const post = <T = any>(path: string, data: any) =>
   api<T>(path, { method: "POST", body: JSON.stringify(data) });
@@ -311,12 +329,17 @@ export async function upload(
   });
 }
 export async function getBlob(path: string, signal?: AbortSignal) {
-  const response = await timedFetch(url(path), {
-    headers: { Authorization: `Bearer ${token}` },
-    signal,
-  });
-  if (!response.ok) return responseError(response);
-  return response.blob();
+  return timedFetch(
+    url(path),
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+    },
+    async (response) => {
+      if (!response.ok) return responseError(response);
+      return response.blob();
+    },
+  );
 }
 export async function download(file: FileItem) {
   const blob = await getBlob(`/files/${file.id}/download`);

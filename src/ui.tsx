@@ -7,7 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import { X, Loader2, ArrowUpRight, FolderOpen } from "lucide-react";
-import { api, getBlob } from "./api";
+import { api } from "./api";
+import { loadPrivateImage } from "./privateImages";
 
 type Toast = (message: string, error?: boolean) => void;
 export const ToastContext = createContext<Toast>(() => {});
@@ -181,36 +182,74 @@ export function PrivateImage({
   alt = "",
   className = "",
   loading,
+  retryable = true,
 }: {
   path: string;
   alt?: string;
   className?: string;
   loading?: "eager" | "lazy";
+  retryable?: boolean;
 }) {
   const [source, setSource] = useState("");
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     let object = "";
-    getBlob(path, controller.signal)
+    setSource("");
+    setError("");
+    loadPrivateImage(path, controller.signal)
       .then((blob) => {
+        if (controller.signal.aborted) return;
+        if (!blob.type.startsWith("image/"))
+          throw new Error("返回的内容不是图片，请下载原文件检查");
         object = URL.createObjectURL(blob);
         setSource(object);
       })
-      .catch(() => {});
+      .catch((failure) => {
+        if (!controller.signal.aborted)
+          setError((failure as Error).message || "图片加载失败");
+      });
     return () => {
       controller.abort();
       if (object) URL.revokeObjectURL(object);
-      setSource("");
     };
-  }, [path]);
-  return source ? (
-    <img src={source} alt={alt} className={className} loading={loading} />
+  }, [path, revision]);
+  return source && !error ? (
+    <img
+      src={source}
+      alt={alt}
+      className={className}
+      loading={loading}
+      onError={() => setError("图片解码失败，请重试或下载原文件查看")}
+    />
   ) : (
     <span
-      className={`image-placeholder ${className}`}
-      role="img"
-      aria-label={alt || "图片加载中"}
-    />
+      className={`image-placeholder ${error ? "image-error" : ""} ${className}`}
+      role={error ? "group" : "img"}
+      aria-label={error ? `${alt || "图片"}加载失败` : `${alt || "图片"}加载中`}
+      aria-busy={!error}
+    >
+      {error ? (
+        <>
+          <span>图片加载失败</span>
+          <small>{error}</small>
+          {retryable ? (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setRevision((value) => value + 1)}
+            >
+              重新加载图片
+            </button>
+          ) : (
+            <small>打开详情后可重试</small>
+          )}
+        </>
+      ) : (
+        <span className="muted">图片加载中…</span>
+      )}
+    </span>
   );
 }
 export function useResource<T>(path: string) {

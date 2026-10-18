@@ -252,6 +252,7 @@ export default function ContentPage() {
                   <PrivateImage
                     path={`/files/${record.payload.file_id || record.payload.cover_file_id}/download?inline=true`}
                     alt={record.payload.title || "个人照片"}
+                    retryable={false}
                   />
                 )}
                 <div className="content-card-copy">

@@ -139,6 +139,7 @@ export default function GalleryExplorer() {
               path={`/tools/gallery/${item.id}`}
               alt={item.title}
               loading="lazy"
+              retryable={false}
             />
             <div>
               <h3>{item.title}</h3>

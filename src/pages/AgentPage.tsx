@@ -57,6 +57,11 @@ import AgentActivity from "./AgentActivity";
 import HistoricalActivity from "./HistoricalActivity";
 import MemoryGrant from "./MemoryGrant";
 import { submitAgentRun, type AgentSettings } from "../runSubmission";
+import {
+  rememberConversation,
+  rememberedConversation,
+  forgetConversation,
+} from "../conversationLocation";
 type Conversation = {
   id: string;
   title: string;
@@ -109,7 +114,14 @@ export default function AgentPage() {
     navigate = useNavigate(),
     [params] = useSearchParams(),
     toast = useToast(),
-    cid = params.get("conversation") || "";
+    cid = params.get("conversation") || "",
+    explicitNew =
+      params.get("new") === "1" ||
+      Boolean(
+        (location.state as any)?.prompt ||
+        (location.state as any)?.serverId ||
+        (location.state as any)?.files?.length,
+      );
   const [conversations, setConversations] = useState<Conversation[]>([]),
     [messages, setMessages] = useState<Detail["messages"]>([]),
     [runs, setRuns] = useState<Run[]>([]),
@@ -158,6 +170,7 @@ export default function AgentPage() {
     [allowMemory, setAllowMemory] = useState(false),
     [artifacts, setArtifacts] = useState<FileItem[]>([]),
     [follow, setFollow] = useState(true);
+  const [streamEpoch, setStreamEpoch] = useState(0);
   const servers = useResource<ServerItem[]>("/servers"),
     settings = useResource<AgentSettings>("/settings"),
     bottom = useRef<HTMLDivElement>(null),
@@ -169,6 +182,7 @@ export default function AgentPage() {
     executionLoadedCid = useRef(""),
     deletionRevision = useRef(0),
     archiveMode = useRef(showArchived);
+  const mounted = useRef(true);
   currentCid.current = cid;
   archiveMode.current = showArchived;
   const compactContext = useMedia("(max-width: 1280px)");
@@ -177,6 +191,35 @@ export default function AgentPage() {
     max_seconds: 1800,
     max_total_tokens: 1000000,
   };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (cid) return;
+    if (explicitNew) rememberConversation(null);
+    else {
+      const previous = rememberedConversation();
+      if (previous)
+        navigate(`/agent?conversation=${previous}`, { replace: true });
+    }
+  }, [cid, explicitNew]);
+  useEffect(() => {
+    const reconnect = () => {
+      if (document.visibilityState !== "hidden")
+        setStreamEpoch((value) => value + 1);
+    };
+    window.addEventListener("online", reconnect);
+    window.addEventListener("focus", reconnect);
+    document.addEventListener("visibilitychange", reconnect);
+    return () => {
+      window.removeEventListener("online", reconnect);
+      window.removeEventListener("focus", reconnect);
+      document.removeEventListener("visibilitychange", reconnect);
+    };
+  }, []);
   useEffect(() => {
     if (!settings.data || executionDefaultsApplied.current) return;
     executionDefaultsApplied.current = true;
@@ -200,7 +243,8 @@ export default function AgentPage() {
     const executionVersion = executionRevision.current;
     if (!/^[a-f0-9]{32}$/i.test(id)) throw new ApiError("对话链接无效", 404);
     const detail = await api<Detail>(`/conversations/${id}`);
-    if (currentCid.current !== id) return;
+    if (!mounted.current || currentCid.current !== id) return;
+    rememberConversation(id);
     setMessages(detail.messages);
     setRuns(detail.runs);
     if (revision === contextRevision.current)
@@ -261,11 +305,13 @@ export default function AgentPage() {
     setArchived(false);
     setTitle("新对话");
     setAllowMemory(false);
+    if (/^[a-f\d]{32}$/i.test(cid)) rememberConversation(cid);
     if (cid)
       void loadConversation(cid).catch((error) => {
-        if (currentCid.current !== cid) return;
+        if (!mounted.current || currentCid.current !== cid) return;
         if (error instanceof ApiError && error.status === 404) {
-          navigate("/agent", { replace: true });
+          forgetConversation(cid);
+          navigate("/agent?new=1", { replace: true });
           toast("这段对话在当前后端不可用，已回到新对话", true);
         } else toast(error.message, true);
       });
@@ -278,6 +324,12 @@ export default function AgentPage() {
     watchRun(
       watched.id,
       (event) => {
+        if (
+          controller.signal.aborted ||
+          !mounted.current ||
+          currentCid.current !== watched.conversation_id
+        )
+          return;
         if (event.kind !== "delta")
           setEvents((old) =>
             old.some((item) => item.seq === event.seq)
@@ -314,6 +366,12 @@ export default function AgentPage() {
       controller.signal,
       setConnection,
       (snapshot) => {
+        if (
+          controller.signal.aborted ||
+          !mounted.current ||
+          currentCid.current !== watched.conversation_id
+        )
+          return;
         if (["queued", "running", "cancelling"].includes(snapshot.status)) {
           setActive(snapshot);
           return;
@@ -331,7 +389,7 @@ export default function AgentPage() {
       },
     ).catch((error) => toast(error.message, true));
     return () => controller.abort();
-  }, [watched?.id]);
+  }, [watched?.id, streamEpoch]);
   useEffect(() => {
     if (!follow || (!messages.length && !active)) return;
     bottom.current?.scrollIntoView({
@@ -381,7 +439,9 @@ export default function AgentPage() {
       };
       const result = await submitAgentRun(payload);
       acknowledgeRequest("agent");
-      if (currentCid.current !== submittedCid) {
+      if ((rememberedConversation() || "") === submittedCid)
+        rememberConversation(result.conversation_id);
+      if (!mounted.current || currentCid.current !== submittedCid) {
         void refreshHistory();
         toast("任务已在原对话提交，可以返回查看进度。");
         return;
@@ -446,7 +506,8 @@ export default function AgentPage() {
     }
   }
   function newConversation() {
-    navigate("/agent");
+    rememberConversation(null);
+    navigate("/agent?new=1");
     setDraft("");
     setFiles([]);
     setMobileHistory(false);

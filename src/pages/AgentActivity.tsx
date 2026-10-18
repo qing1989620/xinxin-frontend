@@ -82,7 +82,11 @@ export default function AgentActivity({
         </p>
       )}
       {!visible.length && (
-        <p className="muted">正在读取上下文，等待第一条执行进度。</p>
+        <p className="muted">
+          {["queued", "running", "cancelling"].includes(run.status)
+            ? "正在读取上下文，等待第一条执行进度。"
+            : "本轮执行已结束，结果和可用记录会保留在此对话。"}
+        </p>
       )}
       <ol>
         {visible.map((event) => (

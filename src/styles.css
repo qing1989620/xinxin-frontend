@@ -1802,6 +1802,21 @@ kbd {
   display: block;
   min-height: 80px;
   background: #eaece4;
+  padding: 18px;
+  text-align: center;
+  align-content: center;
+}
+.image-error {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.image-error > span,
+.image-error > small {
+  display: block;
+  margin-bottom: 8px;
+}
+.image-error > button {
+  margin: 0 auto;
 }
 .style-choice {
   display: grid;

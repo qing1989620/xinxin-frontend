@@ -126,6 +126,83 @@ describe("resource uploads", () => {
 });
 
 describe("private transport boundaries", () => {
+  it("loads authenticated images on WebViews without AbortSignal.any or timeout", async () => {
+    vi.spyOn(AbortSignal, "any").mockImplementation(() => {
+      throw new Error("unsupported");
+    });
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      throw new Error("unsupported");
+    });
+    const { getBlob, setSession } = await import("../src/api");
+    await setSession("synthetic-image-session");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input, options) => {
+        expect(options.headers.Authorization).toBe(
+          "Bearer synthetic-image-session",
+        );
+        return new Response("synthetic image bytes", {
+          headers: { "Content-Type": "image/png" },
+        });
+      }),
+    );
+    const image = await getBlob(
+      "/files/image/preview",
+      new AbortController().signal,
+    );
+    expect(image.type).toBe("image/png");
+  });
+  it("keeps cancellation and timeout active while image response bytes are being read", async () => {
+    vi.useFakeTimers();
+    try {
+      const { getBlob } = await import("../src/api");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input, options) => ({
+          ok: true,
+          blob: () =>
+            new Promise((_resolve, reject) => {
+              options.signal.addEventListener(
+                "abort",
+                () => reject(new DOMException("Aborted", "AbortError")),
+                { once: true },
+              );
+            }),
+        })),
+      );
+      const controller = new AbortController();
+      const pending = getBlob("/files/image/preview", controller.signal);
+      const rejected = expect(pending).rejects.toMatchObject({
+        name: "AbortError",
+      });
+      await Promise.resolve();
+      controller.abort();
+      await rejected;
+      const timeout = getBlob("/files/image/preview");
+      const expired = expect(timeout).rejects.toThrow("连接超时");
+      await vi.advanceTimersByTimeAsync(30001);
+      await expired;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("uses bounded previews and falls back only when the preview route is absent", async () => {
+    const { loadPrivateImage } = await import("../src/privateImages");
+    const path = `/files/${"a".repeat(32)}/download?inline=true`;
+    const request = vi.fn(async (input: string) =>
+      input.endsWith("/preview")
+        ? new Response('{"detail":"Not Found"}', { status: 404 })
+        : new Response("image", { headers: { "Content-Type": "image/png" } }),
+    );
+    vi.stubGlobal("fetch", request);
+    expect(
+      (await loadPrivateImage(path, new AbortController().signal)).type,
+    ).toBe("image/png");
+    expect(request.mock.calls.map(([input]) => input)).toEqual([
+      `/api/v1/files/${"a".repeat(32)}/preview`,
+      `/api/v1${path}`,
+    ]);
+  });
   it("continues the selected run with a fresh budget and a stable retry identity", async () => {
     const { submitAgentRun } = await import("../src/runSubmission");
     const bodies: any[] = [];

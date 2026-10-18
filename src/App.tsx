@@ -52,6 +52,7 @@ import {
 import { Dialog, Loading, useToast } from "./ui";
 import Dashboard from "./pages/Dashboard";
 import AgentPage from "./pages/AgentPage";
+import { configureConversationLocation } from "./conversationLocation";
 import TasksPage from "./pages/TasksPage";
 import FilesPage from "./pages/FilesPage";
 import {
@@ -405,6 +406,10 @@ export default function App() {
       gotStatus = true;
       if (hasSession()) {
         const me = await api<{ name: string }>("/auth/me");
+        await configureConversationLocation(
+          getServer() || window.location.origin,
+          me.name,
+        );
         setName(me.name);
         setState("ready");
       } else setState("auth");
@@ -644,7 +649,7 @@ export default function App() {
         <button
           className="new-task"
           onClick={() => {
-            navigate("/agent");
+            navigate("/agent?new=1");
             setDrawer(false);
           }}
         >
