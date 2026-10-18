@@ -1,6 +1,6 @@
 # Agent 进度、上下文与删除：局部复验
 
-2026-10-18，源码目标 `5ddd5ac`（前一改动 `4c10fad`），后端契约目标 `b452570`。依据 [BadGoods 前端审查助手](https://github.com/BadbotAI/BadGoods/tree/main/skills/review-frontend-production) quick / implement 模式，范围仅本次 Agent 旅程，属于部分审查。
+2026-10-18，源码目标 `5ddd5ac`（前一改动 `4c10fad`），前端部署 `6fc4d34`，后端部署 `47bfc5f`。依据 [BadGoods 前端审查助手](https://github.com/BadbotAI/BadGoods/tree/main/skills/review-frontend-production) quick / implement 模式，范围仅本次 Agent 旅程，属于部分审查。
 
 实现：聊天内公开阶段回复、计划和命令输出；刷新后可读取持久过程；取消请求幂等等待实际终态；流尾缺少 finished 时查询 Run。单会话 80K/300K/1000K 与累计消耗分开，服务端确认偏好后生效，运行期间不可切换。旧后端不支持新契约时明确拒绝，不静默丢弃参数。旧轮次没有档位记录时如实标明。
 
