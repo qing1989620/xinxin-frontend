@@ -126,6 +126,30 @@ describe("resource uploads", () => {
 });
 
 describe("private transport boundaries", () => {
+  it("recovers the terminal state when the event stream ends before finished", async () => {
+    const { watchRun, setSession } = await import("../src/api");
+    await setSession("local-test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (input: string) =>
+          new Response(
+            input.includes("/events")
+              ? "event: end\ndata: {}\n\n"
+              : '{"id":"task","status":"cancelled"}',
+          ),
+      ),
+    );
+    const snapshot = vi.fn();
+    await watchRun(
+      "task",
+      () => {},
+      new AbortController().signal,
+      undefined,
+      snapshot,
+    );
+    expect(snapshot).toHaveBeenCalledWith({ id: "task", status: "cancelled" });
+  });
   it("reports validation fields without echoing inputs or unknown field names", async () => {
     const { post, setSession } = await import("../src/api");
     await setSession("local-test");

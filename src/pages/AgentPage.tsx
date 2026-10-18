@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -24,6 +24,7 @@ import {
   Server,
   Check,
   Bookmark,
+  Trash2,
 } from "lucide-react";
 import {
   api,
@@ -43,6 +44,7 @@ import {
   Empty,
   Status,
   date,
+  size,
   Dialog,
   useResource,
   useToast,
@@ -51,6 +53,8 @@ import {
 import AgentInspector from "./AgentInspector";
 import ResourcePicker from "../ResourcePicker";
 import RunFailureNotice from "./RunFailureNotice";
+import AgentActivity from "./AgentActivity";
+import HistoricalActivity from "./HistoricalActivity";
 import { submitAgentRun, type AgentSettings } from "../runSubmission";
 type Conversation = {
   id: string;
@@ -62,7 +66,13 @@ type Detail = {
   id: string;
   title: string;
   archived: number;
-  messages: { id: string; role: string; content: string }[];
+  messages: {
+    id: string;
+    role: string;
+    content: string;
+    created?: number;
+    run_id?: string;
+  }[];
   runs: Run[];
 };
 const presets = [
@@ -100,6 +110,7 @@ export default function AgentPage() {
     cid = params.get("conversation") || "";
   const [conversations, setConversations] = useState<Conversation[]>([]),
     [messages, setMessages] = useState<Detail["messages"]>([]),
+    [runs, setRuns] = useState<Run[]>([]),
     [draft, setDraft] = useState((location.state as any)?.prompt || ""),
     [permission, setPermission] = useState("read"),
     [server, setServer] = useState((location.state as any)?.serverId || ""),
@@ -112,6 +123,7 @@ export default function AgentPage() {
     [events, setEvents] = useState<EventItem[]>([]),
     [stream, setStream] = useState(""),
     [busy, setBusy] = useState(false),
+    [cancelPending, setCancelPending] = useState(false),
     [trace, setTrace] = useState(
       () => matchMedia("(min-width: 1280px)").matches,
     ),
@@ -123,6 +135,16 @@ export default function AgentPage() {
     [title, setTitle] = useState("新对话"),
     [editing, setEditing] = useState<Conversation | null>(null),
     [rename, setRename] = useState(""),
+    [deleting, setDeleting] = useState<Conversation | null>(null),
+    [deletionPreview, setDeletionPreview] = useState<{
+      messages: number;
+      runs: number;
+      events: number;
+      workspace_bytes: number;
+      generated_bytes: number;
+    } | null>(null),
+    [deletionConfirmed, setDeletionConfirmed] = useState(false),
+    [deletionBusy, setDeletionBusy] = useState(false),
     [options, setOptions] = useState(false),
     [maxCalls, setMaxCalls] = useState(16),
     [maxSeconds, setMaxSeconds] = useState(900),
@@ -135,10 +157,26 @@ export default function AgentPage() {
     bottom = useRef<HTMLDivElement>(null),
     draftRef = useRef<HTMLTextAreaElement>(null),
     currentCid = useRef(cid),
+    executionDefaultsApplied = useRef(false),
     archiveMode = useRef(showArchived);
   currentCid.current = cid;
   archiveMode.current = showArchived;
   const compactContext = useMedia("(max-width: 1280px)");
+  const limits = settings.data?.execution_limits || {
+    max_calls: 20,
+    max_seconds: 1800,
+    max_total_tokens: 1000000,
+  };
+  useEffect(() => {
+    if (!settings.data || executionDefaultsApplied.current) return;
+    executionDefaultsApplied.current = true;
+    const defaults = settings.data.execution_defaults;
+    if (defaults && !active) {
+      setMaxCalls(defaults.max_calls);
+      setMaxSeconds(defaults.max_seconds);
+      setMaxTotalTokens(defaults.max_total_tokens);
+    }
+  }, [settings.data, active]);
   useEffect(() => {
     if (compactContext) setTrace(false);
   }, [compactContext]);
@@ -152,6 +190,7 @@ export default function AgentPage() {
     const detail = await api<Detail>(`/conversations/${id}`);
     if (currentCid.current !== id) return;
     setMessages(detail.messages);
+    setRuns(detail.runs);
     setTitle(detail.title);
     setArchived(Boolean(detail.archived));
     const latest = detail.runs[0] || null;
@@ -182,6 +221,7 @@ export default function AgentPage() {
   }, [showArchived]);
   useEffect(() => {
     setMessages([]);
+    setRuns([]);
     setFollow(true);
     setEvents([]);
     setStream("");
@@ -210,7 +250,17 @@ export default function AgentPage() {
       (event) => {
         if (event.kind !== "delta")
           setEvents((old) =>
-            old.some((item) => item.seq === event.seq) ? old : [...old, event],
+            old.some((item) => item.seq === event.seq)
+              ? old
+              : [
+                  ...old.filter(
+                    (item) =>
+                      event.kind !== "command.progress" ||
+                      item.kind !== "command.progress" ||
+                      item.data.command_id !== event.data.command_id,
+                  ),
+                  event,
+                ],
           );
         if (
           ["delta", "assistant.progress"].includes(event.kind) &&
@@ -219,6 +269,8 @@ export default function AgentPage() {
           setStream((old) => nextAssistantText(old, event));
         if (event.kind === "started")
           setActive((old) => (old ? { ...old, status: "running" } : old));
+        if (event.kind === "cancelling")
+          setActive((old) => (old ? { ...old, status: "cancelling" } : old));
         if (event.kind === "finished") {
           setActive(null);
           setStream("");
@@ -231,6 +283,22 @@ export default function AgentPage() {
       },
       controller.signal,
       setConnection,
+      (snapshot) => {
+        if (["queued", "running", "cancelling"].includes(snapshot.status)) {
+          setActive(snapshot);
+          return;
+        }
+        setActive(null);
+        setStream("");
+        setWatched(snapshot);
+        void loadConversation(snapshot.conversation_id).catch((error) =>
+          toast(error.message, true),
+        );
+        if (settings.data?.capabilities?.command_progress)
+          void api<EventItem[]>(`/runs/${snapshot.id}/activity`)
+            .then(setEvents)
+            .catch(() => {});
+      },
     ).catch((error) => toast(error.message, true));
     return () => controller.abort();
   }, [watched?.id]);
@@ -242,7 +310,7 @@ export default function AgentPage() {
         ? "instant"
         : "smooth",
     });
-  }, [messages.length, stream, follow]);
+  }, [messages.length, stream, follow, events.at(-1)?.seq]);
   async function send() {
     if (!draft.trim() || busy || active || archived) return;
     if (!settings.data) {
@@ -277,8 +345,15 @@ export default function AgentPage() {
       else {
         setMessages((old) => [
           ...old,
-          { id: crypto.randomUUID(), role: "user", content: text },
+          {
+            id: crypto.randomUUID(),
+            role: "user",
+            content: text,
+            created: result.created,
+            run_id: result.id,
+          },
         ]);
+        setRuns((old) => [result, ...old]);
         setActive(result);
         setWatched(result);
         setArtifacts([]);
@@ -425,6 +500,14 @@ export default function AgentPage() {
                         : settings.data.model
                       : "等待配置模型"}
                 </span>
+                {settings.data?.context_window_tokens && (
+                  <span
+                    className="context-capacity"
+                    title={`${settings.data.context_window_tokens.toLocaleString()} tokens`}
+                  >
+                    1M 上下文
+                  </span>
+                )}
                 <span className="agent-model-divider" aria-hidden="true">
                   ·
                 </span>
@@ -510,64 +593,87 @@ export default function AgentPage() {
           ) : (
             <>
               {messages.map((message) => (
-                <article className={`message ${message.role}`} key={message.id}>
-                  <div className="message-label">
-                    <span
-                      className={
-                        message.role === "user"
-                          ? "message-owner"
-                          : "message-agent"
-                      }
-                    >
-                      {message.role === "user" ? "我" : "x"}
-                    </span>
-                    {message.role === "user" ? "你" : "Xinxin"}
-                  </div>
-                  <div className="message-body">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      skipHtml
-                      components={{
-                        img: ({ alt }) => (
-                          <span className="muted">
-                            [图片：{alt || "参考图片"}]
-                          </span>
-                        ),
-                      }}
-                    >
-                      {message.role === "user"
-                        ? message.content.split(
-                            "\n\n本轮附件（使用文件工具读取）：",
-                          )[0]
-                        : message.content}
-                    </ReactMarkdown>
-                  </div>
-                  {message.role === "assistant" && (
-                    <div className="message-actions">
-                      <button
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(
-                              message.content,
-                            );
-                            toast("答复已复制");
-                          } catch {
-                            toast("浏览器未允许复制，请选择文本复制", true);
-                          }
+                <Fragment key={message.id}>
+                  <article className={`message ${message.role}`}>
+                    <div className="message-label">
+                      <span
+                        className={
+                          message.role === "user"
+                            ? "message-owner"
+                            : "message-agent"
+                        }
+                      >
+                        {message.role === "user" ? "我" : "x"}
+                      </span>
+                      {message.role === "user" ? "你" : "Xinxin"}
+                    </div>
+                    <div className="message-body">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        skipHtml
+                        components={{
+                          img: ({ alt }) => (
+                            <span className="muted">
+                              [图片：{alt || "参考图片"}]
+                            </span>
+                          ),
                         }}
                       >
-                        <Copy size={13} />
-                        复制
-                      </button>
-                      {watched && (
-                        <button onClick={() => setTrace(true)}>
-                          <PanelRightOpen size={13} />
-                          查看过程
-                        </button>
-                      )}
+                        {message.role === "user"
+                          ? message.content.split(
+                              "\n\n本轮附件（使用文件工具读取）：",
+                            )[0]
+                          : message.content}
+                      </ReactMarkdown>
                     </div>
-                  )}
-                </article>
+                    {message.role === "assistant" && (
+                      <div className="message-actions">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(
+                                message.content,
+                              );
+                              toast("答复已复制");
+                            } catch {
+                              toast("浏览器未允许复制，请选择文本复制", true);
+                            }
+                          }}
+                        >
+                          <Copy size={13} />
+                          复制
+                        </button>
+                        {watched && (
+                          <button onClick={() => setTrace(true)}>
+                            <PanelRightOpen size={13} />
+                            查看过程
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                  {message.role === "user" &&
+                    (() => {
+                      const run =
+                        runs.find((item) => item.id === message.run_id) ||
+                        runs
+                          .filter((item) => item.task === message.content)
+                          .sort(
+                            (a, b) =>
+                              Math.abs(a.created - (message.created || 0)) -
+                              Math.abs(b.created - (message.created || 0)),
+                          )[0];
+                      if (!run) return null;
+                      return run.id === watched?.id ? (
+                        <AgentActivity
+                          run={active || watched}
+                          events={events}
+                        />
+                      ) : (
+                        <HistoricalActivity run={run} />
+                      );
+                    })()}
+                </Fragment>
               ))}
               {active && (
                 <article className="message assistant">
@@ -759,12 +865,35 @@ export default function AgentPage() {
               {active ? (
                 <button
                   className="send-button stop"
-                  aria-label="停止当前任务"
+                  aria-label={
+                    active.status === "cancelling" || cancelPending
+                      ? "正在停止当前任务"
+                      : "停止当前任务"
+                  }
+                  disabled={active.status === "cancelling" || cancelPending}
                   onClick={async () => {
+                    setCancelPending(true);
                     try {
-                      await post(`/runs/${active.id}/cancel`, {});
+                      const result = await post<Run>(
+                        `/runs/${active.id}/cancel`,
+                        {},
+                      );
+                      if (
+                        ["queued", "running", "cancelling"].includes(
+                          result.status,
+                        )
+                      )
+                        setActive(result);
+                      else {
+                        setActive(null);
+                        void loadConversation(result.conversation_id).catch(
+                          (error) => toast(error.message, true),
+                        );
+                      }
                     } catch (error) {
                       toast((error as Error).message, true);
+                    } finally {
+                      setCancelPending(false);
                     }
                   }}
                 >
@@ -889,7 +1018,108 @@ export default function AgentPage() {
                 保存名称
               </button>
             </div>
+            {settings.data?.capabilities?.conversation_delete && (
+              <button
+                type="button"
+                className="text-button destructive"
+                onClick={async () => {
+                  const conversation = editing;
+                  setDeleting(conversation);
+                  setDeletionConfirmed(false);
+                  setDeletionPreview(null);
+                  setEditing(null);
+                  try {
+                    setDeletionPreview(
+                      await api(
+                        `/conversations/${conversation.id}/deletion-preview`,
+                      ),
+                    );
+                  } catch (error) {
+                    toast((error as Error).message, true);
+                    setDeleting(null);
+                  }
+                }}
+              >
+                <Trash2 size={15} />
+                永久删除并清理空间…
+              </button>
+            )}
           </form>
+        </Dialog>
+      )}
+      {deleting && (
+        <Dialog
+          title="永久删除对话"
+          onClose={() => {
+            if (!deletionBusy) setDeleting(null);
+          }}
+        >
+          <div className="form-stack">
+            <p>
+              将永久删除「{deleting.title}
+              」的消息、执行日志、上下文检查点、工作区和专属生成文件。此操作无法在应用中撤销。
+            </p>
+            {deletionPreview ? (
+              <p className="field-help">
+                {deletionPreview.messages} 条消息 · {deletionPreview.runs}{" "}
+                轮任务 · {deletionPreview.events} 条执行事件。工作区{" "}
+                {size(deletionPreview.workspace_bytes)}，生成文件最多{" "}
+                {size(deletionPreview.generated_bytes)}
+                ；被其他对话引用的文件会保留。
+              </p>
+            ) : (
+              <p role="status">正在计算清理范围…</p>
+            )}
+            <p className="field-help">
+              独立资料库上传、服务器部署目录与服务保留。已有备份按原保留周期到期。
+            </p>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={deletionConfirmed}
+                disabled={deletionBusy}
+                onChange={(event) => setDeletionConfirmed(event.target.checked)}
+              />
+              我确认永久删除这段对话及其专属数据
+            </label>
+            <div className="dialog-actions">
+              <button
+                className="button secondary"
+                disabled={deletionBusy}
+                onClick={() => setDeleting(null)}
+              >
+                保留对话
+              </button>
+              <button
+                className="button destructive"
+                disabled={
+                  !deletionConfirmed || !deletionPreview || deletionBusy
+                }
+                onClick={async () => {
+                  setDeletionBusy(true);
+                  try {
+                    const result = await remove(
+                      `/conversations/${deleting.id}/permanent`,
+                    );
+                    if (cid === deleting.id) newConversation();
+                    setDeleting(null);
+                    void refreshHistory();
+                    toast(
+                      result.cleanup_pending
+                        ? "对话已删除，部分暂存文件仍待清理，请查看存储状态。"
+                        : `对话已永久删除，清理文件空间 ${size(result.removed_file_bytes)}。`,
+                    );
+                  } catch (error) {
+                    toast((error as Error).message, true);
+                  } finally {
+                    setDeletionBusy(false);
+                  }
+                }}
+              >
+                {deletionBusy ? "正在清理空间…" : "永久删除"}
+              </button>
+            </div>
+          </div>
         </Dialog>
       )}
       {options && (
@@ -899,11 +1129,18 @@ export default function AgentPage() {
               仅用于下一次提交。任务开始后，权限、目标和预算保持固定。
             </p>
             <div className="budget-presets">
-              {[
-                ["轻量", 4, 120, 80000],
-                ["常规", 16, 900, 320000],
-                ["深入", 20, 1800, 400000],
-              ].map(([label, calls, seconds, tokens]) => (
+              {(settings.data?.execution_limits
+                ? [
+                    ["轻量", 16, 600, 1000000],
+                    ["常规", 64, 3600, 8000000],
+                    ["深入", 128, 7200, 32000000],
+                  ]
+                : [
+                    ["轻量", 4, 120, 80000],
+                    ["常规", 16, 900, 320000],
+                    ["深入", 20, 1800, 400000],
+                  ]
+              ).map(([label, calls, seconds, tokens]) => (
                 <button
                   key={label}
                   className={
@@ -930,11 +1167,14 @@ export default function AgentPage() {
                 <input
                   type="number"
                   min={1}
-                  max={20}
+                  max={limits.max_calls}
                   value={maxCalls}
                   onChange={(e) =>
                     setMaxCalls(
-                      Math.max(1, Math.min(20, Number(e.target.value))),
+                      Math.max(
+                        1,
+                        Math.min(limits.max_calls, Number(e.target.value)),
+                      ),
                     )
                   }
                 />
@@ -944,22 +1184,25 @@ export default function AgentPage() {
                 <input
                   type="number"
                   min={10}
-                  max={1800}
+                  max={limits.max_seconds}
                   value={maxSeconds}
                   onChange={(e) =>
                     setMaxSeconds(
-                      Math.max(10, Math.min(1800, Number(e.target.value))),
+                      Math.max(
+                        10,
+                        Math.min(limits.max_seconds, Number(e.target.value)),
+                      ),
                     )
                   }
                 />
               </label>
             </div>
             <label>
-              累计令牌预算（输入＋输出）
+              本轮累计用量上限（多次请求的输入＋输出）
               <input
                 type="number"
                 min={5000}
-                max={1000000}
+                max={limits.max_total_tokens}
                 step={5000}
                 disabled={!settings.data?.capabilities?.run_token_budget}
                 placeholder="由服务端决定"
@@ -970,11 +1213,21 @@ export default function AgentPage() {
                 }
                 onChange={(e) =>
                   setMaxTotalTokens(
-                    Math.max(5000, Math.min(1000000, Number(e.target.value))),
+                    Math.max(
+                      5000,
+                      Math.min(limits.max_total_tokens, Number(e.target.value)),
+                    ),
                   )
                 }
               />
             </label>
+            {settings.data?.context_window_tokens && (
+              <p className="field-help">
+                模型上下文窗口：
+                {settings.data.context_window_tokens.toLocaleString()}{" "}
+                tokens（1M）。上面的累计用量统计多次调用，与一次能保留的上下文长度分别计算。仅在接近窗口时回收旧交换，历史执行记录仍保存在本对话。
+              </p>
+            )}
             <p className="field-help">
               {settings.data?.capabilities?.run_token_budget
                 ? "按模型服务返回的用量累计，下一次调用前检查；单次响应可能超过剩余预算。完整权限决定能做什么，预算决定本轮能执行多久。"

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import RunFailureNotice, { failureReason } from "../src/pages/RunFailureNotice";
-import type { Run } from "../src/api";
+import AgentActivity, { activityEvents } from "../src/pages/AgentActivity";
+import type { EventItem, Run } from "../src/api";
 
 const run = {
   status: "failed",
@@ -14,6 +15,52 @@ const run = {
 } as Run;
 
 describe("failed task recovery", () => {
+  it("keeps public progress visible with the newest terminal snapshot and actual step statuses", () => {
+    const events = [
+      {
+        seq: 1,
+        kind: "assistant.progress",
+        data: { text: "依赖已经检查，开始构建。" },
+      },
+      {
+        seq: 2,
+        kind: "command.progress",
+        data: {
+          command_id: "one",
+          name: "run_remote_command",
+          elapsed_seconds: 1,
+          output: "old output",
+        },
+      },
+      {
+        seq: 3,
+        kind: "command.progress",
+        data: {
+          command_id: "one",
+          name: "run_remote_command",
+          elapsed_seconds: 3,
+          output: "STEP_ONE\n<img src=x onerror=bad()>",
+        },
+      },
+      {
+        seq: 4,
+        kind: "plan.updated",
+        data: {
+          steps: [{ id: "build", title: "构建项目", status: "in_progress" }],
+        },
+      },
+    ] as EventItem[];
+    const html = renderToStaticMarkup(
+      <AgentActivity run={{ ...run, status: "cancelling" }} events={events} />,
+    );
+    expect(activityEvents(events).map((event) => event.seq)).toEqual([1, 3, 4]);
+    expect(html).toContain("依赖已经检查");
+    expect(html).toContain("STEP_ONE");
+    expect(html).toContain("构建项目");
+    expect(html).toContain("正在结束命令");
+    expect(html).not.toContain("old output");
+    expect(html).not.toContain("<img");
+  });
   it("knows the legacy fixed limit even before the backend schema is upgraded", () => {
     expect(failureReason({ ...run, max_total_tokens: undefined })).toContain(
       "55701/50000",

@@ -3,7 +3,24 @@ import { api, post, stableRequestKey, type Run } from "./api";
 export type AgentSettings = {
   model: string;
   model_configured: boolean;
-  capabilities?: { run_token_budget?: boolean; run_recovery?: boolean };
+  context_window_tokens?: number;
+  execution_defaults?: {
+    max_calls: number;
+    max_seconds: number;
+    max_total_tokens: number;
+  };
+  execution_limits?: {
+    max_calls: number;
+    max_seconds: number;
+    max_total_tokens: number;
+  };
+  capabilities?: {
+    run_token_budget?: boolean;
+    run_recovery?: boolean;
+    command_progress?: boolean;
+    context_checkpoints?: boolean;
+    conversation_delete?: boolean;
+  };
 };
 
 export type RunSubmission = {
@@ -20,6 +37,20 @@ export type RunSubmission = {
 
 export async function submitAgentRun(payload: RunSubmission): Promise<Run> {
   const settings = await api<AgentSettings>("/settings");
+  const limits = settings.execution_limits || {
+    max_calls: 20,
+    max_seconds: 1800,
+    max_total_tokens: 1000000,
+  };
+  if (
+    payload.max_calls > limits.max_calls ||
+    payload.max_seconds > limits.max_seconds ||
+    (payload.max_total_tokens !== undefined &&
+      payload.max_total_tokens > limits.max_total_tokens)
+  )
+    throw new Error(
+      "执行预算超过当前后端支持范围，请刷新连接或更新后端后再提交。",
+    );
   if (
     payload.max_total_tokens !== undefined &&
     !settings.capabilities?.run_token_budget

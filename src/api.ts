@@ -362,9 +362,11 @@ export async function watchRun(
   onEvent: (event: EventItem) => void,
   signal: AbortSignal,
   onConnection?: (state: string) => void,
+  onSnapshot?: (run: Run) => void,
 ) {
   let cursor = 0,
-    delay = 500;
+    delay = 500,
+    sawFinished = false;
   while (!signal.aborted) {
     try {
       const response = await fetch(url(`/runs/${id}/events?after=${cursor}`), {
@@ -386,7 +388,11 @@ export async function watchRun(
         while ((boundary = buffer.indexOf("\n\n")) >= 0) {
           const block = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
-          if (block.includes("event: end")) return;
+          if (block.includes("event: end")) {
+            if (!sawFinished && onSnapshot)
+              onSnapshot(await api<Run>(`/runs/${id}`));
+            return;
+          }
           const text = block
             .split("\n")
             .filter((line) => line.startsWith("data:"))
@@ -396,11 +402,13 @@ export async function watchRun(
           const event = JSON.parse(text) as EventItem;
           if (event.seq > cursor) {
             cursor = event.seq;
+            if (event.kind === "finished") sawFinished = true;
             onEvent(event);
           }
         }
       }
       const run = await api<Run>(`/runs/${id}`);
+      onSnapshot?.(run);
       if (!["queued", "running", "cancelling"].includes(run.status)) return;
     } catch (error) {
       if (signal.aborted) return;

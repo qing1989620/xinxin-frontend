@@ -33,6 +33,8 @@ const toolNames: Record<string, string> = {
   read_document: "阅读资料",
   search_skills: "检索技能",
   load_skill: "加载技能",
+  update_plan: "更新任务步骤",
+  read_task_history: "读取历史执行记录",
   plot_csv_tool: "绘制图表",
   transform_image_tool: "转换图片",
   remember: "保存记忆",
@@ -63,9 +65,16 @@ export default function AgentInspector({
   useEffect(() => {
     setRated([]);
   }, [run?.id]);
+  let storedUsage: Record<string, any> = {};
+  try {
+    storedUsage = JSON.parse(run?.usage || "{}");
+  } catch {
+    /* Older interrupted records may omit usage. */
+  }
   const selection = events.find((event) => event.kind === "skills")?.data,
     usage =
-      [...events].reverse().find((event) => event.kind === "usage")?.data || {};
+      [...events].reverse().find((event) => event.kind === "usage")?.data ||
+      storedUsage;
   const finished = events.some((event) => event.kind === "finished"),
     hasTool = events.some((event) => event.kind === "tool.started");
   const phases = [
@@ -188,6 +197,11 @@ export default function AgentInspector({
                                 "assistant.progress": "Xinxin 的进度",
                                 "budget.exhausted": "本轮预算已达到",
                                 "context.restored": "已恢复前轮工具记录",
+                                "context.checkpoint_restored": "已恢复持久会话",
+                                "context.compacted": "已回收旧上下文",
+                                "command.progress": "终端实时输出",
+                                "plan.updated": "任务步骤已更新",
+                                "tool.cancelled": "命令停止结果",
                               }[event.kind] || event.kind}
                       </strong>
                       {event.kind === "tool.started" && (
@@ -200,6 +214,15 @@ export default function AgentInspector({
                       )}
                       {event.kind === "assistant.progress" && (
                         <p>{event.data.text}</p>
+                      )}
+                      {event.kind === "command.progress" && (
+                        <>
+                          <small>执行 {event.data.elapsed_seconds} 秒</small>
+                          <pre>{event.data.output || "等待输出…"}</pre>
+                        </>
+                      )}
+                      {event.kind === "context.checkpoint_restored" && (
+                        <p>已续接 {event.data.messages} 条消息和工具记录。</p>
                       )}
                       {event.kind === "budget.exhausted" && (
                         <p>
@@ -364,6 +387,14 @@ export default function AgentInspector({
       </div>
       <footer className="inspector-footer">
         <span>
+          上下文约{" "}
+          {Number(
+            usage.context_tokens_estimate || usage.prompt_tokens_last || 0,
+          ).toLocaleString()}{" "}
+          / {Number(usage.context_window_tokens || 1048576).toLocaleString()}{" "}
+          tokens
+        </span>
+        <span>
           <Clock3 size={13} />
           {usage.calls || 0} / {run?.max_calls ?? usage.max_calls ?? "—"} 次调用
         </span>
@@ -372,7 +403,7 @@ export default function AgentInspector({
           {(
             run?.max_total_tokens ?? usage.max_total_tokens
           )?.toLocaleString() ?? "—"}{" "}
-          令牌
+          累计令牌（多次调用合计）
         </span>
       </footer>
       {skill && (
