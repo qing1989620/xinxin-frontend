@@ -19,7 +19,6 @@ import {
   Archive,
   Copy,
   SlidersHorizontal,
-  RotateCcw,
   FolderOpen,
   Code2,
   Server,
@@ -52,6 +51,7 @@ import {
 } from "../ui";
 import AgentInspector from "./AgentInspector";
 import ResourcePicker from "../ResourcePicker";
+import RunFailureNotice from "./RunFailureNotice";
 type Conversation = {
   id: string;
   title: string;
@@ -124,8 +124,9 @@ export default function AgentPage() {
     [editing, setEditing] = useState<Conversation | null>(null),
     [rename, setRename] = useState(""),
     [options, setOptions] = useState(false),
-    [maxCalls, setMaxCalls] = useState(8),
-    [maxSeconds, setMaxSeconds] = useState(300),
+    [maxCalls, setMaxCalls] = useState(16),
+    [maxSeconds, setMaxSeconds] = useState(900),
+    [maxTotalTokens, setMaxTotalTokens] = useState(320000),
     [allowMemory, setAllowMemory] = useState(false),
     [artifacts, setArtifacts] = useState<FileItem[]>([]),
     [follow, setFollow] = useState(true);
@@ -164,8 +165,9 @@ export default function AgentPage() {
     if (ongoing) {
       setPermission(ongoing.permission);
       setServer(ongoing.server_id || "");
-      setMaxCalls(ongoing.max_calls ?? 8);
-      setMaxSeconds(ongoing.max_seconds ?? 300);
+      setMaxCalls(ongoing.max_calls ?? 16);
+      setMaxSeconds(ongoing.max_seconds ?? 900);
+      setMaxTotalTokens(ongoing.max_total_tokens ?? 320000);
       setAllowMemory(Boolean(ongoing.allow_memory));
     } else setAllowMemory(false);
     setWatched(latest);
@@ -256,6 +258,7 @@ export default function AgentPage() {
         server_id: server || null,
         max_calls: maxCalls,
         max_seconds: maxSeconds,
+        max_total_tokens: maxTotalTokens,
         allow_memory: allowMemory,
         file_ids: files.map((file) => file.id),
       };
@@ -596,21 +599,17 @@ export default function AgentPage() {
                 </article>
               )}
               {!active && watched?.status === "failed" && (
-                <div className="conversation-recovery">
-                  <span>本轮未完成，可以补充信息或调整权限后继续。</span>
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setDraft(
-                        `继续处理刚才的任务。请先说明未完成的原因，再在我本轮授予的权限内推进。`,
-                      );
-                      draftRef.current?.focus();
-                    }}
-                  >
-                    <RotateCcw size={14} />
-                    继续处理
-                  </button>
-                </div>
+                <RunFailureNotice
+                  run={watched}
+                  onTrace={() => setTrace(true)}
+                  onOptions={() => setOptions(true)}
+                  onContinue={() => {
+                    setDraft(
+                      "继续完成原任务。先核对前轮已完成步骤，从未完成处推进，避免重复已完成的操作。遵守我本轮选择的权限和目标。",
+                    );
+                    draftRef.current?.focus();
+                  }}
+                />
               )}
             </>
           )}
@@ -900,16 +899,23 @@ export default function AgentPage() {
             </p>
             <div className="budget-presets">
               {[
-                ["轻量", 4, 120],
-                ["常规", 8, 300],
-                ["深入", 16, 900],
-              ].map(([label, calls, seconds]) => (
+                ["轻量", 4, 120, 80000],
+                ["常规", 16, 900, 320000],
+                ["深入", 20, 1800, 400000],
+              ].map(([label, calls, seconds, tokens]) => (
                 <button
                   key={label}
-                  className={maxCalls === calls ? "selected" : ""}
+                  className={
+                    maxCalls === calls &&
+                    maxSeconds === seconds &&
+                    maxTotalTokens === tokens
+                      ? "selected"
+                      : ""
+                  }
                   onClick={() => {
                     setMaxCalls(Number(calls));
                     setMaxSeconds(Number(seconds));
+                    setMaxTotalTokens(Number(tokens));
                   }}
                 >
                   {label}
@@ -947,6 +953,24 @@ export default function AgentPage() {
                 />
               </label>
             </div>
+            <label>
+              累计令牌预算（输入＋输出）
+              <input
+                type="number"
+                min={5000}
+                max={1000000}
+                step={5000}
+                value={maxTotalTokens}
+                onChange={(e) =>
+                  setMaxTotalTokens(
+                    Math.max(5000, Math.min(1000000, Number(e.target.value))),
+                  )
+                }
+              />
+            </label>
+            <p className="field-help">
+              按模型服务返回的用量累计，下一次调用前检查；单次响应可能超过剩余预算。完整权限决定能做什么，预算决定本轮能执行多久。
+            </p>
             <label className="checkbox-row">
               <input
                 type="checkbox"

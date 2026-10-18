@@ -26,6 +26,7 @@ export type Run = {
   files?: FileItem[];
   max_calls?: number;
   max_seconds?: number;
+  max_total_tokens?: number;
   allow_memory?: boolean | number;
 };
 export type RecordItem = {

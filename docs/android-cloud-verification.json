@@ -2,7 +2,7 @@
   "apk": "releases/Xinxin-0.1.0-cloud.apk",
   "build": "release-private-https",
   "bytes": 3460900,
-  "sha256": "ebdac7708aa76e2162ba10487f5865ebfbe6e071528f6774c5a6ff1beff8db1f",
+  "sha256": "c82ca22f8ab9da1714631a26e4ae7ef1bf0d133ec90e7a0e2a24daffda25c218",
   "web_assets_matched": 18,
   "native_allow_mixed_content": false,
   "real_device_verified": false,
@@ -21,8 +21,5 @@
   "system_backup_allowed": false,
   "access_mode": "private-tailnet",
   "private_https_access": "server_self_verified_over_tailnet_address",
-  "owner_reported_local_apk_acceptance": "2026-10-17",
-  "owner_reported_prior_private_cloud_agent_acceptance": "2026-10-18",
-  "prior_phone_report_does_not_verify_this_apk": true,
-  "private_download_sha256_verified_after_deployment": true
+  "owner_reported_local_apk_acceptance": "2026-10-17"
 }

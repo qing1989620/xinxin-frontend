@@ -414,6 +414,26 @@
 .archived-notice {
   margin-bottom: 12px;
 }
+.conversation-recovery {
+  flex-direction: column;
+  align-items: stretch;
+}
+.recovery-reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.recovery-reason strong {
+  color: var(--ink);
+}
+.recovery-reason p {
+  margin: 5px 0;
+  white-space: pre-wrap;
+}
+.recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
 .budget-presets {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

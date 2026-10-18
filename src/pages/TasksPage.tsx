@@ -295,6 +295,8 @@ export default function TasksPage() {
                               artifacts: "交付物已保存",
                               cancelling: "正在停止",
                               "assistant.progress": "Xinxin 的进度",
+                              "budget.exhausted": "本轮预算已达到",
+                              "context.restored": "已恢复前轮工具记录",
                             }[event.kind] || event.kind}
                           </strong>
                           {event.data.name && <code>{event.data.name}</code>}

@@ -186,6 +186,8 @@ export default function AgentInspector({
                                 cancelling: "正在停止",
                                 artifacts: "交付物已保存",
                                 "assistant.progress": "Xinxin 的进度",
+                                "budget.exhausted": "本轮预算已达到",
+                                "context.restored": "已恢复前轮工具记录",
                               }[event.kind] || event.kind}
                       </strong>
                       {event.kind === "tool.started" && (
@@ -198,6 +200,20 @@ export default function AgentInspector({
                       )}
                       {event.kind === "assistant.progress" && (
                         <p>{event.data.text}</p>
+                      )}
+                      {event.kind === "budget.exhausted" && (
+                        <p>
+                          {event.data.kind === "calls"
+                            ? "模型调用次数"
+                            : "累计令牌"}
+                          ：{event.data.used} / {event.data.limit}
+                        </p>
+                      )}
+                      {event.kind === "context.restored" && (
+                        <p>
+                          已读取 {event.data.runs} 轮记录、{event.data.events}{" "}
+                          条工具事件，按本轮权限继续。
+                        </p>
                       )}
                       {event.kind.startsWith("tool.") && (
                         <details>
@@ -349,9 +365,15 @@ export default function AgentInspector({
       <footer className="inspector-footer">
         <span>
           <Clock3 size={13} />
-          {usage.calls || 0} 次模型调用
+          {usage.calls || 0} / {run?.max_calls ?? usage.max_calls ?? "—"} 次调用
         </span>
-        <span>{(usage.total_tokens || 0).toLocaleString()} tokens</span>
+        <span>
+          {(usage.total_tokens || 0).toLocaleString()} /{" "}
+          {(
+            run?.max_total_tokens ?? usage.max_total_tokens
+          )?.toLocaleString() ?? "—"}{" "}
+          令牌
+        </span>
       </footer>
       {skill && (
         <Dialog title={skill.name} onClose={() => setSkill(null)} wide>
