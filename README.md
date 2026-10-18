@@ -31,4 +31,4 @@ npm run build
 
 审查流程：[audit-plan.md](docs/audit-plan.md)。
 
-粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android包已预填实际私有HTTPS地址并签名；密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。已有APK也可手填私有HTTPS地址；新发布包的实体手机连接需单独验证。任务进度与最终答复分离、断线回放与11项测试见 [response-review.md](docs/response-review.md)，Markdown正文和复制保持原样。
+粒子技能中心、多文件资源上传与附件选择见 [功能审查](docs/skill-persona-review.md)。Android包已预填实际私有HTTPS地址并签名；密钥只留本机忽略目录，APK不提交Git。见 [Android构建与安装](docs/android.md)、[云端交付审查](docs/cloud-deployment-review.md)。已有APK也可手填私有HTTPS地址；新发布包的实体手机连接需单独验证。任务进度与最终答复分离及断线回放见 [response-review.md](docs/response-review.md)，Markdown正文和复制保持原样。最新18项测试及预算失败、续接、新旧后端兼容和合成页面实测见 [执行续接审查](docs/execution-recovery-review.md)。

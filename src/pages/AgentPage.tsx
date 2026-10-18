@@ -32,7 +32,6 @@ import {
   put,
   remove,
   watchRun,
-  stableRequestKey,
   acknowledgeRequest,
   type EventItem,
   type FileItem,
@@ -52,6 +51,7 @@ import {
 import AgentInspector from "./AgentInspector";
 import ResourcePicker from "../ResourcePicker";
 import RunFailureNotice from "./RunFailureNotice";
+import { submitAgentRun, type AgentSettings } from "../runSubmission";
 type Conversation = {
   id: string;
   title: string;
@@ -131,9 +131,7 @@ export default function AgentPage() {
     [artifacts, setArtifacts] = useState<FileItem[]>([]),
     [follow, setFollow] = useState(true);
   const servers = useResource<ServerItem[]>("/servers"),
-    settings = useResource<{ model: string; model_configured: boolean }>(
-      "/settings",
-    ),
+    settings = useResource<AgentSettings>("/settings"),
     bottom = useRef<HTMLDivElement>(null),
     draftRef = useRef<HTMLTextAreaElement>(null),
     currentCid = useRef(cid),
@@ -247,6 +245,10 @@ export default function AgentPage() {
   }, [messages.length, stream, follow]);
   async function send() {
     if (!draft.trim() || busy || active || archived) return;
+    if (!settings.data) {
+      toast("正在读取后端能力，请稍候再提交。", true);
+      return;
+    }
     setBusy(true);
     setFollow(true);
     const text = draft;
@@ -258,14 +260,13 @@ export default function AgentPage() {
         server_id: server || null,
         max_calls: maxCalls,
         max_seconds: maxSeconds,
-        max_total_tokens: maxTotalTokens,
+        ...(settings.data.capabilities?.run_token_budget
+          ? { max_total_tokens: maxTotalTokens }
+          : {}),
         allow_memory: allowMemory,
         file_ids: files.map((file) => file.id),
       };
-      const result = await post<Run>("/runs", {
-        ...payload,
-        request_key: await stableRequestKey("agent", payload),
-      });
+      const result = await submitAgentRun(payload);
       acknowledgeRequest("agent");
       setDraft("");
       setFiles([]);
@@ -960,7 +961,13 @@ export default function AgentPage() {
                 min={5000}
                 max={1000000}
                 step={5000}
-                value={maxTotalTokens}
+                disabled={!settings.data?.capabilities?.run_token_budget}
+                placeholder="由服务端决定"
+                value={
+                  settings.data?.capabilities?.run_token_budget
+                    ? maxTotalTokens
+                    : ""
+                }
                 onChange={(e) =>
                   setMaxTotalTokens(
                     Math.max(5000, Math.min(1000000, Number(e.target.value))),
@@ -969,7 +976,9 @@ export default function AgentPage() {
               />
             </label>
             <p className="field-help">
-              按模型服务返回的用量累计，下一次调用前检查；单次响应可能超过剩余预算。完整权限决定能做什么，预算决定本轮能执行多久。
+              {settings.data?.capabilities?.run_token_budget
+                ? "按模型服务返回的用量累计，下一次调用前检查；单次响应可能超过剩余预算。完整权限决定能做什么，预算决定本轮能执行多久。"
+                : "当前后端未提供自定义令牌预算；本轮仅发送调用次数和时间设置。更新后端并刷新连接后可调整令牌预算。"}
             </p>
             <label className="checkbox-row">
               <input

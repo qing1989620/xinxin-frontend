@@ -179,9 +179,53 @@ async function responseError(response: Response): Promise<never> {
     typeof detail === "string"
       ? detail
       : response.status === 422
-        ? "请检查表单内容"
+        ? validationMessage(detail)
         : `请求失败 (${response.status})`,
     response.status,
+  );
+}
+
+function validationMessage(detail: unknown): string {
+  if (!Array.isArray(detail))
+    return "提交内容未通过校验，请检查任务和执行参数。";
+  const fields: Record<string, string> = {
+    task: "任务内容",
+    max_calls: "模型调用次数",
+    max_seconds: "执行时间",
+    max_total_tokens: "累计令牌预算",
+    file_ids: "附件",
+    request_key: "请求标识",
+    server_id: "目标服务器",
+    conversation_id: "对话",
+    permission: "权限等级",
+    allow_memory: "记忆授权",
+    name: "名称",
+    password: "密码",
+    email: "邮箱",
+    host: "服务器地址",
+    port: "端口",
+    username: "登录名",
+    model: "模型名称",
+    model_url: "模型地址",
+    model_api_key: "模型密钥",
+  };
+  return (
+    detail
+      .slice(0, 4)
+      .map((issue) => {
+        const field = Array.isArray(issue?.loc)
+          ? issue.loc.find(
+              (part: unknown) =>
+                typeof part === "string" &&
+                Object.prototype.hasOwnProperty.call(fields, part),
+            )
+          : undefined;
+        const label = field ? fields[field] : "提交内容";
+        return issue?.type === "extra_forbidden"
+          ? `${label}：当前后端不支持该字段，请确认前后端版本一致。`
+          : `${label}：格式、长度或范围不符合要求。`;
+      })
+      .join("\n") || "提交内容未通过校验，请检查任务和执行参数。"
   );
 }
 

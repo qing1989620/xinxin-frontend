@@ -126,6 +126,116 @@ describe("resource uploads", () => {
 });
 
 describe("private transport boundaries", () => {
+  it("reports validation fields without echoing inputs or unknown field names", async () => {
+    const { post, setSession } = await import("../src/api");
+    await setSession("local-test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              detail: [
+                {
+                  loc: ["body", "max_total_tokens"],
+                  type: "extra_forbidden",
+                  input: "private-input",
+                  msg: "private-input",
+                },
+                {
+                  loc: ["body", "private-field-name"],
+                  type: "value_error",
+                  ctx: { private: "private-input" },
+                },
+              ],
+            }),
+            { status: 422 },
+          ),
+      ),
+    );
+    const error = await post("/runs", {}).catch((error: Error) => error);
+    expect(error.message).toContain("累计令牌预算");
+    expect(error.message).toContain("前后端版本");
+    expect(error.message).not.toContain("private-input");
+    expect(error.message).not.toContain("private-field-name");
+  });
+  it("submits the supported legacy fields to an older backend", async () => {
+    const { setSession } = await import("../src/api");
+    const { submitAgentRun } = await import("../src/runSubmission");
+    await setSession("local-test");
+    const request = vi.fn(async (input: string, options?: RequestInit) => {
+      if (input.endsWith("/settings"))
+        return new Response('{"model":"offline","model_configured":true}');
+      expect(JSON.parse(String(options?.body))).not.toHaveProperty(
+        "max_total_tokens",
+      );
+      return new Response('{"id":"legacy-accepted"}');
+    });
+    vi.stubGlobal("fetch", request);
+    const result = await submitAgentRun({
+      task: "synthetic",
+      conversation_id: null,
+      server_id: null,
+      permission: "read",
+      max_calls: 8,
+      max_seconds: 300,
+      allow_memory: false,
+      file_ids: [],
+    });
+    expect(result.id).toBe("legacy-accepted");
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("honors explicit token budgets when the backend advertises support", async () => {
+    const { setSession } = await import("../src/api");
+    const { submitAgentRun } = await import("../src/runSubmission");
+    await setSession("local-test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, options?: RequestInit) => {
+        if (input.endsWith("/settings"))
+          return new Response(
+            '{"model":"offline","model_configured":true,"capabilities":{"run_token_budget":true}}',
+          );
+        expect(JSON.parse(String(options?.body)).max_total_tokens).toBe(80000);
+        return new Response('{"id":"new-accepted"}');
+      }),
+    );
+    const result = await submitAgentRun({
+      task: "synthetic",
+      conversation_id: null,
+      server_id: null,
+      permission: "read",
+      max_calls: 4,
+      max_seconds: 120,
+      max_total_tokens: 80000,
+      allow_memory: false,
+      file_ids: [],
+    });
+    expect(result.id).toBe("new-accepted");
+  });
+  it("does not silently drop an explicit budget if the backend was rolled back", async () => {
+    const { setSession } = await import("../src/api");
+    const { submitAgentRun } = await import("../src/runSubmission");
+    await setSession("local-test");
+    const request = vi.fn(
+      async () => new Response('{"model":"offline","model_configured":true}'),
+    );
+    vi.stubGlobal("fetch", request);
+    await expect(
+      submitAgentRun({
+        task: "synthetic",
+        conversation_id: null,
+        server_id: null,
+        permission: "read",
+        max_calls: 4,
+        max_seconds: 120,
+        max_total_tokens: 5000,
+        allow_memory: false,
+        file_ids: [],
+      }),
+    ).rejects.toThrow("不支持自定义令牌预算");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it("replays progress separately and preserves final Markdown across reconnects", async () => {
     const { setSession, watchRun } = await import("../src/api");
     const { nextAssistantText } = await import("../src/runText");

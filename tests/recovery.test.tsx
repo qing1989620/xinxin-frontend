@@ -14,6 +14,11 @@ const run = {
 } as Run;
 
 describe("failed task recovery", () => {
+  it("knows the legacy fixed limit even before the backend schema is upgraded", () => {
+    expect(failureReason({ ...run, max_total_tokens: undefined })).toContain(
+      "55701/50000",
+    );
+  });
   it("explains the legacy hidden budget without claiming permissions are missing", () => {
     expect(failureReason(run)).toContain("55701/50000");
     const html = renderToStaticMarkup(
