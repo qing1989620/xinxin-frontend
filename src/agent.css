@@ -81,7 +81,7 @@
   background: var(--accent-soft);
   color: var(--accent);
 }
-.conversation-item > button:first-child {
+.conversation-item > button:not(.conversation-menu) {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -90,12 +90,12 @@
   text-align: left;
   padding: 12px 7px;
 }
-.conversation-item > button:first-child > svg {
+.conversation-item > button:not(.conversation-menu) > svg {
   flex-shrink: 0;
   margin-top: 2px;
   color: var(--muted);
 }
-.conversation-item > button:first-child > span {
+.conversation-item > button:not(.conversation-menu) > span {
   min-width: 0;
 }
 .conversation-item strong {
@@ -1004,12 +1004,60 @@
   padding: 12px;
   border-radius: 6px;
 }
-.activity-terminal > div {
+.activity-terminal > summary {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: baseline;
   font-size: 11px;
+}
+.activity-terminal > summary > span {
+  margin-left: 8px;
+  font-weight: 400;
+}
+.activity-narration {
+  padding: 4px 0;
+  font-size: 13px;
+  line-height: 1.85;
+}
+.activity-narration > small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+  font-size: 10px;
+}
+.activity-narration p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.activity-waiting {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+}
+.history-batch {
+  display: grid;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 11px;
+}
+.history-batch .checkbox-row {
+  font-size: 10px;
+  gap: 6px;
+}
+.conversation-item:has(.conversation-select) {
+  align-items: center;
+}
+.conversation-select {
+  flex-shrink: 0;
+  width: 16px;
+  accent-color: var(--accent);
+  margin: 0 0 0 4px;
+}
+.deletion-titles {
+  max-height: 160px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.8;
 }
 .activity-terminal > div > span,
 .activity-terminal small,

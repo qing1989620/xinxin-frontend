@@ -55,6 +55,7 @@ import ResourcePicker from "../ResourcePicker";
 import RunFailureNotice from "./RunFailureNotice";
 import AgentActivity from "./AgentActivity";
 import HistoricalActivity from "./HistoricalActivity";
+import MemoryGrant from "./MemoryGrant";
 import { submitAgentRun, type AgentSettings } from "../runSubmission";
 type Conversation = {
   id: string;
@@ -134,11 +135,13 @@ export default function AgentPage() {
     [mobileHistory, setMobileHistory] = useState(false),
     [historyQuery, setHistoryQuery] = useState(""),
     [showArchived, setShowArchived] = useState(false),
+    [selectingConversations, setSelectingConversations] = useState(false),
+    [selectedConversations, setSelectedConversations] = useState<string[]>([]),
     [archived, setArchived] = useState(false),
     [title, setTitle] = useState("新对话"),
     [editing, setEditing] = useState<Conversation | null>(null),
     [rename, setRename] = useState(""),
-    [deleting, setDeleting] = useState<Conversation | null>(null),
+    [deleting, setDeleting] = useState<Conversation[] | null>(null),
     [deletionPreview, setDeletionPreview] = useState<{
       messages: number;
       runs: number;
@@ -162,6 +165,9 @@ export default function AgentPage() {
     currentCid = useRef(cid),
     executionDefaultsApplied = useRef(false),
     contextRevision = useRef(0),
+    executionRevision = useRef(0),
+    executionLoadedCid = useRef(""),
+    deletionRevision = useRef(0),
     archiveMode = useRef(showArchived);
   currentCid.current = cid;
   archiveMode.current = showArchived;
@@ -191,6 +197,7 @@ export default function AgentPage() {
   }
   async function loadConversation(id: string) {
     const revision = contextRevision.current;
+    const executionVersion = executionRevision.current;
     if (!/^[a-f0-9]{32}$/i.test(id)) throw new ApiError("对话链接无效", 404);
     const detail = await api<Detail>(`/conversations/${id}`);
     if (currentCid.current !== id) return;
@@ -215,7 +222,19 @@ export default function AgentPage() {
       setAllowMemory(Boolean(ongoing.allow_memory));
       if (ongoing.context_window_tokens)
         setContextWindow(ongoing.context_window_tokens);
-    } else setAllowMemory(false);
+    } else {
+      setAllowMemory(false);
+      if (
+        executionLoadedCid.current !== id &&
+        executionVersion === executionRevision.current &&
+        latest &&
+        ["failed", "cancelled", "interrupted"].includes(latest.status)
+      ) {
+        setPermission(latest.permission);
+        setServer(latest.server_id || "");
+      }
+    }
+    executionLoadedCid.current = id;
     setWatched(latest);
     if (latest) {
       const full = await api<Run>(`/runs/${latest.id}`);
@@ -227,8 +246,10 @@ export default function AgentPage() {
   }
   useEffect(() => {
     void refreshHistory().catch((error) => toast(error.message, true));
+    setSelectedConversations([]);
   }, [showArchived]);
   useEffect(() => {
+    executionLoadedCid.current = "";
     setMessages([]);
     setRuns([]);
     setFollow(true);
@@ -321,7 +342,17 @@ export default function AgentPage() {
     });
   }, [messages.length, stream, follow, events.at(-1)?.seq]);
   async function send() {
-    if (!draft.trim() || busy || active || archived || contextSaving) return;
+    await submit();
+  }
+  async function submit(resumeRun?: Run) {
+    if (
+      (!draft.trim() && !resumeRun) ||
+      busy ||
+      active ||
+      archived ||
+      contextSaving
+    )
+      return;
     if (!settings.data) {
       toast("正在读取后端能力，请稍候再提交。", true);
       return;
@@ -329,6 +360,7 @@ export default function AgentPage() {
     setBusy(true);
     setFollow(true);
     const text = draft;
+    const submittedCid = cid;
     try {
       const payload = {
         task: text,
@@ -345,9 +377,15 @@ export default function AgentPage() {
           : {}),
         allow_memory: allowMemory,
         file_ids: files.map((file) => file.id),
+        ...(resumeRun ? { resume_run_id: resumeRun.id } : {}),
       };
       const result = await submitAgentRun(payload);
       acknowledgeRequest("agent");
+      if (currentCid.current !== submittedCid) {
+        void refreshHistory();
+        toast("任务已在原对话提交，可以返回查看进度。");
+        return;
+      }
       setDraft("");
       setFiles([]);
       if (!cid)
@@ -360,7 +398,9 @@ export default function AgentPage() {
           {
             id: crypto.randomUUID(),
             role: "user",
-            content: text,
+            content: resumeRun
+              ? "继续原任务。" + (text ? "\n补充：" + text : "")
+              : text,
             created: result.created,
             run_id: result.id,
           },
@@ -377,6 +417,34 @@ export default function AgentPage() {
       setBusy(false);
     }
   }
+  function closeDeletion() {
+    if (deletionBusy) return;
+    deletionRevision.current++;
+    setDeleting(null);
+  }
+  async function openDeletion(items: Conversation[]) {
+    if (!items.length) return;
+    const revision = ++deletionRevision.current;
+    setDeleting(items);
+    setDeletionConfirmed(false);
+    setDeletionPreview(null);
+    setEditing(null);
+    setMobileHistory(false);
+    try {
+      const preview =
+        items.length === 1
+          ? await api(`/conversations/${items[0].id}/deletion-preview`)
+          : await post("/conversations/batch/deletion-preview", {
+              ids: items.map((item) => item.id),
+            });
+      if (revision === deletionRevision.current) setDeletionPreview(preview);
+    } catch (error) {
+      if (revision === deletionRevision.current) {
+        toast((error as Error).message, true);
+        closeDeletion();
+      }
+    }
+  }
   function newConversation() {
     navigate("/agent");
     setDraft("");
@@ -386,6 +454,18 @@ export default function AgentPage() {
     contextRevision.current++;
     setContextWindow(1048576);
     draftRef.current?.focus();
+  }
+  const filteredConversations = conversations.filter((item) =>
+    item.title.toLowerCase().includes(historyQuery.toLowerCase()),
+  );
+  function toggleConversation(id: string) {
+    setSelectedConversations((old) =>
+      old.includes(id)
+        ? old.filter((item) => item !== id)
+        : old.length < 100
+          ? [...old, id]
+          : old,
+    );
   }
   const history = (
     <>
@@ -431,40 +511,108 @@ export default function AgentPage() {
           已归档
         </button>
       </div>
+      {settings.data?.capabilities?.conversation_batch_delete && (
+        <div className="history-batch">
+          <button
+            className="text-button"
+            onClick={() => {
+              setSelectingConversations(!selectingConversations);
+              setSelectedConversations([]);
+            }}
+          >
+            {selectingConversations ? "退出选择" : "批量管理"}
+          </button>
+          {selectingConversations && (
+            <>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  aria-label="全选当前筛选的对话"
+                  checked={
+                    filteredConversations.length > 0 &&
+                    filteredConversations
+                      .slice(0, 100)
+                      .every((item) => selectedConversations.includes(item.id))
+                  }
+                  onChange={(event) =>
+                    setSelectedConversations(
+                      event.target.checked
+                        ? filteredConversations
+                            .slice(0, 100)
+                            .map((item) => item.id)
+                        : [],
+                    )
+                  }
+                />
+                全选当前列表（最多100段）
+              </label>
+              <button
+                className="text-button destructive"
+                disabled={
+                  !selectedConversations.length || busy || Boolean(active)
+                }
+                onClick={() =>
+                  void openDeletion(
+                    conversations.filter((item) =>
+                      selectedConversations.includes(item.id),
+                    ),
+                  )
+                }
+              >
+                <Trash2 size={14} />
+                删除所选 {selectedConversations.length} 段…
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <div className="conversation-list">
-        {conversations
-          .filter((item) =>
-            item.title.toLowerCase().includes(historyQuery.toLowerCase()),
-          )
-          .map((item) => (
-            <div
-              className={`conversation-item ${cid === item.id ? "selected" : ""}`}
-              key={item.id}
+        {filteredConversations.map((item) => (
+          <div
+            className={`conversation-item ${cid === item.id ? "selected" : ""}`}
+            key={item.id}
+          >
+            {selectingConversations && (
+              <input
+                type="checkbox"
+                className="conversation-select"
+                aria-label={`选择对话 ${item.title}`}
+                checked={selectedConversations.includes(item.id)}
+                disabled={
+                  !selectedConversations.includes(item.id) &&
+                  selectedConversations.length >= 100
+                }
+                onChange={() => toggleConversation(item.id)}
+              />
+            )}
+            <button
+              onClick={() => {
+                if (selectingConversations) {
+                  toggleConversation(item.id);
+                  return;
+                }
+                navigate(`/agent?conversation=${item.id}`);
+                setMobileHistory(false);
+              }}
             >
-              <button
-                onClick={() => {
-                  navigate(`/agent?conversation=${item.id}`);
-                  setMobileHistory(false);
-                }}
-              >
-                <MessageSquare size={15} />
-                <span>
-                  <strong>{item.title}</strong>
-                  <small>{date(item.updated)}</small>
-                </span>
-              </button>
-              <button
-                className="conversation-menu icon-button"
-                aria-label={`管理对话 ${item.title}`}
-                onClick={() => {
-                  setEditing(item);
-                  setRename(item.title);
-                }}
-              >
-                <MoreHorizontal size={16} />
-              </button>
-            </div>
-          ))}
+              <MessageSquare size={15} />
+              <span>
+                <strong>{item.title}</strong>
+                <small>{date(item.updated)}</small>
+              </span>
+            </button>
+            <button
+              className="conversation-menu icon-button"
+              aria-label={`管理对话 ${item.title}`}
+              onClick={() => {
+                setEditing(item);
+                setRename(item.title);
+              }}
+            >
+              <MoreHorizontal size={16} />
+            </button>
+          </div>
+        ))}
         {!conversations.length && (
           <div className="history-empty">
             <MessageSquare size={24} strokeWidth={1} />
@@ -724,19 +872,20 @@ export default function AgentPage() {
                   )}
                 </article>
               )}
-              {!active && watched?.status === "failed" && (
-                <RunFailureNotice
-                  run={watched}
-                  onTrace={() => setTrace(true)}
-                  onOptions={() => setOptions(true)}
-                  onContinue={() => {
-                    setDraft(
-                      "继续完成原任务。先核对前轮已完成步骤，从未完成处推进，避免重复已完成的操作。遵守我本轮选择的权限和目标。",
-                    );
-                    draftRef.current?.focus();
-                  }}
-                />
-              )}
+              {!active &&
+                watched &&
+                ["failed", "cancelled", "interrupted"].includes(
+                  watched.status,
+                ) && (
+                  <RunFailureNotice
+                    run={watched}
+                    onTrace={() => setTrace(true)}
+                    onOptions={() => setOptions(true)}
+                    continuing={busy}
+                    disabled={archived || contextSaving}
+                    onContinue={() => void submit(watched)}
+                  />
+                )}
             </>
           )}
           <div ref={bottom} />
@@ -840,6 +989,7 @@ export default function AgentPage() {
                   value={permission}
                   disabled={active !== null || archived}
                   onChange={(e) => {
+                    executionRevision.current++;
                     setPermission(e.target.value);
                     if (e.target.value === "read") setAllowMemory(false);
                   }}
@@ -854,6 +1004,7 @@ export default function AgentPage() {
                   value={server}
                   disabled={active !== null || archived}
                   onChange={(e) => {
+                    executionRevision.current++;
                     if (e.target.value === "add") navigate("/servers");
                     else setServer(e.target.value);
                   }}
@@ -1076,23 +1227,7 @@ export default function AgentPage() {
               <button
                 type="button"
                 className="text-button destructive"
-                onClick={async () => {
-                  const conversation = editing;
-                  setDeleting(conversation);
-                  setDeletionConfirmed(false);
-                  setDeletionPreview(null);
-                  setEditing(null);
-                  try {
-                    setDeletionPreview(
-                      await api(
-                        `/conversations/${conversation.id}/deletion-preview`,
-                      ),
-                    );
-                  } catch (error) {
-                    toast((error as Error).message, true);
-                    setDeleting(null);
-                  }
-                }}
+                onClick={() => void openDeletion([editing])}
               >
                 <Trash2 size={15} />
                 永久删除并清理空间…
@@ -1103,23 +1238,30 @@ export default function AgentPage() {
       )}
       {deleting && (
         <Dialog
-          title="永久删除对话"
-          onClose={() => {
-            if (!deletionBusy) setDeleting(null);
-          }}
+          title={
+            deleting.length > 1
+              ? `永久删除 ${deleting.length} 段对话`
+              : "永久删除对话"
+          }
+          onClose={closeDeletion}
         >
           <div className="form-stack">
             <p>
-              将永久删除「{deleting.title}
-              」的消息、执行日志、上下文检查点、工作区和专属生成文件。此操作无法在应用中撤销。
+              将永久删除所选 {deleting.length}{" "}
+              段对话的消息、执行日志、上下文检查点、工作区和专属生成文件。此操作无法在应用中撤销。
             </p>
+            <ul className="deletion-titles">
+              {deleting.map((item) => (
+                <li key={item.id}>{item.title}</li>
+              ))}
+            </ul>
             {deletionPreview ? (
               <p className="field-help">
                 {deletionPreview.messages} 条消息 · {deletionPreview.runs}{" "}
                 轮任务 · {deletionPreview.events} 条执行事件。工作区{" "}
                 {size(deletionPreview.workspace_bytes)}，生成文件最多{" "}
                 {size(deletionPreview.generated_bytes)}
-                ；被其他对话引用的文件会保留。
+                ；被未选对话或内容引用的文件会保留。
               </p>
             ) : (
               <p role="status">正在计算清理范围…</p>
@@ -1134,13 +1276,13 @@ export default function AgentPage() {
                 disabled={deletionBusy}
                 onChange={(event) => setDeletionConfirmed(event.target.checked)}
               />
-              我确认永久删除这段对话及其专属数据
+              我确认永久删除所选 {deleting.length} 段对话及其专属数据
             </label>
             <div className="dialog-actions">
               <button
                 className="button secondary"
                 disabled={deletionBusy}
-                onClick={() => setDeleting(null)}
+                onClick={closeDeletion}
               >
                 保留对话
               </button>
@@ -1152,11 +1294,16 @@ export default function AgentPage() {
                 onClick={async () => {
                   setDeletionBusy(true);
                   try {
-                    const result = await remove(
-                      `/conversations/${deleting.id}/permanent`,
-                    );
-                    if (cid === deleting.id) newConversation();
+                    const ids = deleting.map((item) => item.id);
+                    const result =
+                      ids.length === 1
+                        ? await remove(`/conversations/${ids[0]}/permanent`)
+                        : await post("/conversations/batch/permanent", { ids });
+                    if (ids.includes(cid)) newConversation();
+                    deletionRevision.current++;
                     setDeleting(null);
+                    setSelectedConversations([]);
+                    setSelectingConversations(false);
                     void refreshHistory();
                     toast(
                       result.cleanup_pending
@@ -1291,18 +1438,16 @@ export default function AgentPage() {
                 ? "按模型服务返回的用量累计，下一次调用前检查；单次响应可能超过剩余预算。完整权限决定能做什么，预算决定本轮能执行多久。"
                 : "当前后端未提供自定义令牌预算；本轮仅发送调用次数和时间设置。更新后端并刷新连接后可调整令牌预算。"}
             </p>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={allowMemory}
-                disabled={permission === "read"}
-                onChange={(e) => setAllowMemory(e.target.checked)}
-              />
-              允许 Agent 保存本轮明确提出的记忆
-            </label>
-            <p className="field-help">
-              需要工作区或完整权限。未开启时，后端会拒绝记忆写入；保存的记忆可随时编辑、删除。
-            </p>
+            <MemoryGrant
+              permission={permission}
+              checked={allowMemory}
+              disabled={Boolean(active) || busy}
+              onChange={(checked, nextPermission) => {
+                executionRevision.current++;
+                setPermission(nextPermission);
+                setAllowMemory(checked);
+              }}
+            />
             <div className="dialog-actions">
               <button
                 className="button primary"

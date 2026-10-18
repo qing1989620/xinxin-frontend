@@ -29,6 +29,7 @@ export type Run = {
   max_total_tokens?: number;
   context_window_tokens?: number | null;
   allow_memory?: boolean | number;
+  resume_of?: string | null;
 };
 export type RecordItem = {
   id: string;

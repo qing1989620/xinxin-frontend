@@ -22,6 +22,9 @@ export type AgentSettings = {
     context_checkpoints?: boolean;
     conversation_delete?: boolean;
     context_tiers?: boolean;
+    public_progress?: boolean;
+    run_continuation?: boolean;
+    conversation_batch_delete?: boolean;
   };
 };
 
@@ -36,10 +39,13 @@ export type RunSubmission = {
   context_window_tokens?: number;
   allow_memory: boolean;
   file_ids: string[];
+  resume_run_id?: string;
 };
 
 export async function submitAgentRun(payload: RunSubmission): Promise<Run> {
   const settings = await api<AgentSettings>("/settings");
+  if (payload.resume_run_id && !settings.capabilities?.run_continuation)
+    throw new Error("当前后端不支持一键续接，请更新后端后重试。");
   if (
     payload.context_window_tokens !== undefined &&
     !settings.capabilities?.context_tiers
@@ -66,8 +72,19 @@ export async function submitAgentRun(payload: RunSubmission): Promise<Run> {
     throw new Error(
       "当前后端不支持自定义令牌预算，请刷新连接或更新后端后再提交。",
     );
-  return post<Run>("/runs", {
-    ...payload,
-    request_key: await stableRequestKey("agent", payload),
-  });
+  const request_key = await stableRequestKey("agent", payload);
+  if (payload.resume_run_id) {
+    const {
+      resume_run_id,
+      conversation_id: _conversation,
+      task,
+      ...execution
+    } = payload;
+    return post<Run>(`/runs/${resume_run_id}/continue`, {
+      ...execution,
+      instruction: task,
+      request_key,
+    });
+  }
+  return post<Run>("/runs", { ...payload, request_key });
 }

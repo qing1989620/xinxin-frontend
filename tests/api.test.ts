@@ -126,6 +126,72 @@ describe("resource uploads", () => {
 });
 
 describe("private transport boundaries", () => {
+  it("continues the selected run with a fresh budget and a stable retry identity", async () => {
+    const { submitAgentRun } = await import("../src/runSubmission");
+    const bodies: any[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, options?: RequestInit) => {
+        if (input.endsWith("/settings"))
+          return new Response(
+            JSON.stringify({
+              model_configured: true,
+              capabilities: { run_continuation: true, run_token_budget: true },
+              execution_limits: {
+                max_calls: 128,
+                max_seconds: 7200,
+                max_total_tokens: 100000000,
+              },
+            }),
+          );
+        expect(input).toContain("/runs/parent/continue");
+        bodies.push(JSON.parse(String(options?.body)));
+        return new Response('{"id":"continued-run"}');
+      }),
+    );
+    const payload = {
+      task: "only finish remaining work",
+      conversation_id: "same-conversation",
+      resume_run_id: "parent",
+      permission: "read",
+      server_id: null,
+      max_calls: 64,
+      max_seconds: 3600,
+      max_total_tokens: 8000000,
+      allow_memory: false,
+      file_ids: [],
+    };
+    await submitAgentRun(payload);
+    await submitAgentRun(payload);
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(bodies[0].instruction).toBe(payload.task);
+    expect(bodies[0].permission).toBe("read");
+    expect(bodies[0].max_calls).toBe(64);
+    expect(bodies[0]).not.toHaveProperty("conversation_id");
+    expect(bodies[0]).not.toHaveProperty("task");
+    expect(bodies[0]).not.toHaveProperty("resume_run_id");
+  });
+  it("does not replace continuation with an unrelated new task on an old backend", async () => {
+    const { submitAgentRun } = await import("../src/runSubmission");
+    const request = vi.fn(
+      async () => new Response('{"model_configured":true}'),
+    );
+    vi.stubGlobal("fetch", request);
+    await expect(
+      submitAgentRun({
+        task: "",
+        conversation_id: "conversation",
+        resume_run_id: "parent",
+        permission: "read",
+        server_id: null,
+        max_calls: 8,
+        max_seconds: 300,
+        allow_memory: false,
+        file_ids: [],
+      }),
+    ).rejects.toThrow("不支持一键续接");
+    expect(request).toHaveBeenCalledTimes(1);
+  });
   it.each([80000, 300000, 1048576])(
     "sends the selected %i context independently from the cumulative token budget",
     async (tier) => {

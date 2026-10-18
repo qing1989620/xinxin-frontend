@@ -21,14 +21,26 @@ export function activityEvents(events: EventItem[]) {
     if (event.kind === "command.progress")
       latest.set(event.data.command_id, event.seq);
     if (event.kind === "plan.updated") latest.set("plan", event.seq);
+    if (event.kind === "progress.wait")
+      latest.set(`wait:${event.data.command_id}`, event.seq);
   }
+  const narrated = events.some((event) => event.kind === "progress.note");
   return events.filter((event) => {
     if (event.kind === "command.progress")
       return latest.get(event.data.command_id) === event.seq;
     if (event.kind === "plan.updated") return latest.get("plan") === event.seq;
-    if (event.data.name === "update_plan") return false;
+    if (event.kind === "progress.wait")
+      return (
+        latest.get(`wait:${event.data.command_id}`) === event.seq &&
+        !event.data.finished
+      );
+    if (["update_plan", "report_progress"].includes(event.data.name))
+      return false;
+    if (narrated && event.kind === "tool.started") return false;
     return [
       "assistant.progress",
+      "progress.note",
+      "context.continued",
       "tool.started",
       "tool.completed",
       "tool.cancelled",
@@ -78,9 +90,32 @@ export default function AgentActivity({
             key={event.seq}
             className={`activity-${event.kind.replaceAll(".", "-")}`}
           >
-            {event.kind === "assistant.progress" ? (
+            {event.kind === "progress.note" ||
+            event.kind === "progress.wait" ? (
+              <div
+                className={`activity-narration ${event.kind === "progress.wait" ? "activity-waiting" : ""}`}
+              >
+                <small>
+                  {event.data.source === "agent"
+                    ? "Xinxin · 进度"
+                    : event.kind === "progress.wait"
+                      ? "等待说明"
+                      : "执行状态"}
+                </small>
+                <p>
+                  {event.kind === "progress.wait" &&
+                  !["running", "queued", "cancelling"].includes(run.status)
+                    ? "本轮已经结束；本步最终状态请查看后续工具结果。"
+                    : String(event.data.text || "")}
+                </p>
+              </div>
+            ) : event.kind === "assistant.progress" ? (
               <div className="activity-message">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  skipHtml
+                  components={{ img: ({ alt }) => <span>[图片：{alt}]</span> }}
+                >
                   {String(event.data.text || "")}
                 </ReactMarkdown>
               </div>
@@ -108,21 +143,22 @@ export default function AgentActivity({
                 <small>步骤状态由 Agent 更新；执行结果以工具记录为准。</small>
               </div>
             ) : event.kind === "command.progress" ? (
-              <div className="activity-terminal">
-                <div>
+              <details className="activity-terminal">
+                <summary>
                   <strong>{names[event.data.name] || "终端"}</strong>
                   <span>
                     执行用时 {event.data.elapsed_seconds} 秒 ·{" "}
                     {Number(event.data.output_bytes || 0).toLocaleString()} 字节
                   </span>
-                </div>
+                  <span>展开日志</span>
+                </summary>
                 <pre aria-label="命令实时输出">
                   {event.data.output || "命令运行中，等待输出…"}
                 </pre>
                 {event.data.truncated && (
                   <small>显示最近输出，完整受控结果见执行详情。</small>
                 )}
-              </div>
+              </details>
             ) : event.kind.startsWith("tool.") ? (
               <details
                 className={event.data.ok === false ? "activity-error" : ""}
@@ -143,11 +179,13 @@ export default function AgentActivity({
               </details>
             ) : (
               <p className="activity-context">
-                {event.kind === "context.compacted"
-                  ? `接近上下文窗口，已回收 ${event.data.removed_groups} 组旧交换；原始执行记录仍可读取。`
-                  : event.kind === "context.checkpoint_restored"
-                    ? `已续接 ${event.data.messages} 条持久消息和工具记录。`
-                    : `已恢复前轮 ${event.data.events} 条工具事实。`}
+                {event.kind === "context.continued"
+                  ? `已接上原任务与前轮进度。本轮使用新的预算（最多 ${event.data.max_calls} 次调用），已完成的操作会先核对再继续。`
+                  : event.kind === "context.compacted"
+                    ? `接近上下文窗口，已回收 ${event.data.removed_groups} 组旧交换；原始执行记录仍可读取。`
+                    : event.kind === "context.checkpoint_restored"
+                      ? `已续接 ${event.data.messages} 条持久消息和工具记录。`
+                      : `已恢复前轮 ${event.data.events} 条工具事实。`}
               </p>
             )}
           </li>
